@@ -1,4 +1,8 @@
 
+# Version 1.2.0 built on 2020-10-xx
+
+ - Add multithreaded decoding support
+
 # Version 1.1.3 built on 2020-10-xx
 
  - Provide readline, readlines, peek methods by inheriting from BufferedReader.
