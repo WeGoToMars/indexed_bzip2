@@ -2,10 +2,15 @@ CPP=g++
 CFLAGS=-I ../indexed_bzip2 -std=c++14 -Wall -Wextra -Wshadow -Wsuggest-override -O3 -g
 LFLAGS=-pthread
 
-all: testBitStringFinder
+all: testBitStringFinder testThreadPool
 
 testBitStringFinder: testBitStringFinder.o
 	$(CPP) $(LFLAGS) $^ -o $@
 
 testBitStringFinder.o: testBitStringFinder.cpp ../indexed_bzip2/BitStringFinder.hpp
+
+testThreadPool: testThreadPool.o
+	$(CPP) $(LFLAGS) $^ -o $@
+
+testThreadPool.o: testThreadPool.cpp ../indexed_bzip2/ThreadPool.hpp ../indexed_bzip2/JoiningThread.hpp
 	$(CPP) $(CFLAGS) -c $< -o $@
