@@ -174,7 +174,7 @@ public:
         return nBytesDecoded;
     }
 
-private:
+protected:
     /**
      * Undo burrows-wheeler transform on intermediate buffer @ref dbuf to @ref outBuf
      *
@@ -212,7 +212,7 @@ private:
     void
     readBzip2Header();
 
-private:
+protected:
     BitReader m_bitReader;
     BlockHeader m_lastHeader;
 
@@ -278,7 +278,7 @@ BZ2Reader::seek( long long int offset,
     /* find offset from map (key and values are sorted, so we can bisect!) */
     const auto blockOffset = std::lower_bound(
         m_blockToDataOffsets.rbegin(), m_blockToDataOffsets.rend(), std::make_pair( 0, offset ),
-        [offset] ( std::pair<size_t, size_t> a, std::pair<size_t, size_t> b ) { return a.second > b.second; } );
+        [] ( std::pair<size_t, size_t> a, std::pair<size_t, size_t> b ) { return a.second > b.second; } );
 
     if ( ( blockOffset == m_blockToDataOffsets.rend() ) || ( static_cast<size_t>( offset ) < blockOffset->second ) ) {
         throw std::runtime_error( "Could not find block to seek to for given offset" );

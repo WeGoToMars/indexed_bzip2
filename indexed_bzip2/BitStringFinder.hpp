@@ -14,6 +14,8 @@
 #include <unistd.h>         // dup, fileno
 
 
+namespace
+{
 template<typename I1,
          typename I2,
          typename Enable = typename std::enable_if<
@@ -26,6 +28,7 @@ ceilDiv( I1 dividend,
 {
     return ( dividend + divisor - 1 ) / divisor;
 }
+}
 
 
 /**
@@ -34,8 +37,12 @@ ceilDiv( I1 dividend,
  * It is less a file object and acts more like an iterator.
  * It offers a @ref find method returning the next match or std::numeric_limits<size_t>::max() if the end was reached.
  */
+template<size_t bitStringCount>
 class BitStringFinder
 {
+public:
+    using BitStringsContainer = std::array<uint64_t, bitStringCount>;
+
 public:
     BitStringFinder( BitStringFinder&& ) = default;
 
@@ -45,37 +52,37 @@ public:
 
     BitStringFinder& operator=( BitStringFinder&& ) = default;
 
-    BitStringFinder( std::string filePath,
-                     uint64_t    bitStringToFind,
-                     uint8_t     bitStringSize,
-                     size_t      fileBufferSizeBytes = 1*1024*1024 ) :
-        m_file( std::fopen( filePath.c_str(), "rb" ) ),
+    BitStringFinder( std::string         filePath,
+                     BitStringsContainer bitStringsToFind,
+                     uint8_t             bitStringSize,
+                     size_t              fileBufferSizeBytes = 1*1024*1024 ) :
+        m_file             ( std::fopen( filePath.c_str(), "rb" ) ),
         m_fileChunksInBytes( std::max( fileBufferSizeBytes, static_cast<size_t>( ceilDiv( bitStringSize, 8 ) ) ) ),
-        m_bitStringToFind( bitStringToFind & mask( bitStringSize ) ),
-        m_bitStringSize( bitStringSize )
+        m_bitStringsToFind ( maskBitStrings( bitStringsToFind, bitStringSize ) ),
+        m_bitStringSize    ( bitStringSize )
     {
         fseek( m_file, 0, SEEK_SET );
     }
 
-    BitStringFinder( int fileDescriptor,
-                     uint64_t    bitStringToFind,
-                     uint8_t     bitStringSize,
-                     size_t      fileBufferSizeBytes = 1*1024*1024 ) :
-        m_file( fdopen( dup( fileDescriptor ), "rb" ) ),
+    BitStringFinder( int                 fileDescriptor,
+                     BitStringsContainer bitStringsToFind,
+                     uint8_t             bitStringSize,
+                     size_t              fileBufferSizeBytes = 1*1024*1024 ) :
+        m_file             ( fdopen( dup( fileDescriptor ), "rb" ) ),
         m_fileChunksInBytes( std::max( fileBufferSizeBytes, static_cast<size_t>( ceilDiv( bitStringSize, 8 ) ) ) ),
-        m_bitStringToFind( bitStringToFind & mask( bitStringSize ) ),
-        m_bitStringSize( bitStringSize )
+        m_bitStringsToFind ( maskBitStrings( bitStringsToFind, bitStringSize ) ),
+        m_bitStringSize    ( bitStringSize )
     {
         fseek( m_file, 0, SEEK_SET );
     }
 
-    BitStringFinder( const char* buffer,
-                     size_t      size,
-                     uint64_t    bitStringToFind,
-                     uint8_t     bitStringSize ) :
-        m_buffer( buffer, buffer + size ),
-        m_bitStringToFind( bitStringToFind & mask( bitStringSize ) ),
-        m_bitStringSize( bitStringSize )
+    BitStringFinder( const char*         buffer,
+                     size_t              size,
+                     BitStringsContainer bitStringsToFind,
+                     uint8_t             bitStringSize ) :
+        m_buffer          ( buffer, buffer + size ),
+        m_bitStringsToFind( maskBitStrings( bitStringsToFind, bitStringSize ) ),
+        m_bitStringSize   ( bitStringSize )
     {}
 
     /**
@@ -126,7 +133,9 @@ public:
                 for ( int j = m_bufferBitsRead & 7U; j < CHAR_BIT; ++j, ++m_bufferBitsRead ) {
                     const auto bit = ( byte >> ( 7 - j ) ) & 1U;
                     m_movingWindow = ( ( m_movingWindow << 1 ) | bit ) & bitMask;
-                    if ( m_movingWindow == m_bitStringToFind ) {
+                    if ( std::any_of( m_bitStringsToFind.begin(), m_bitStringsToFind.end(),
+                                      [this] ( auto bitStringToFind ) { return m_movingWindow == bitStringToFind; } ) )
+                    {
                         ++m_bufferBitsRead;
                         return m_nTotalBytesRead * CHAR_BIT + m_bufferBitsRead - m_bitStringSize;
                     }
@@ -158,25 +167,31 @@ private:
      *
      * @param length the number of lowest bits which should be 1 (rest are 0)
      */
-    static uint64_t
+    static constexpr uint64_t
     mask( uint8_t length )
     {
         return ~static_cast<uint64_t>( 0 ) >> ( sizeof( uint64_t ) * CHAR_BIT - length );
     }
 
-    void
-    init()
+    /** Sets all bits not inside the the specified bit string size to zero. */
+    static constexpr BitStringsContainer
+    maskBitStrings( const BitStringsContainer& bitStrings,
+                    uint8_t                    bitStringSize )
     {
-        if ( m_file != nullptr ) {
-            std::fseek( m_file, 0, SEEK_END );
-            m_fileSizeBytes = std::ftell( m_file );
-            std::fseek( m_file, 0, SEEK_SET ); /* good to have even when not getting the size! */
+        if ( bitStrings.empty() ) {
+            throw std::invalid_argument( "Need at least one bit string!" );
         }
+
+        BitStringsContainer masked;
+        for ( size_t i = 0; i < bitStrings.size(); ++i ) {
+            masked[i] = bitStrings[i] & mask( bitStringSize );
+        }
+
+        return masked;
     }
 
 private:
     std::FILE* m_file = nullptr;
-    size_t m_fileSizeBytes = 0;
     /** This is not the current size of @ref m_buffer but the number of bytes to read from @ref m_file if it is empty */
     const size_t m_fileChunksInBytes = 1*1024*1024;
     std::vector<char> m_buffer;
@@ -197,6 +212,6 @@ private:
      */
     size_t m_nTotalBytesRead = 0;
 
-    const uint64_t m_bitStringToFind;
+    const BitStringsContainer m_bitStringsToFind;
     const uint8_t m_bitStringSize;
 };
