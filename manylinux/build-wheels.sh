@@ -3,6 +3,13 @@ set -e -x
 
 PLATFORM=$1
 
+# Try to use a newer self-compiled g++ in custom manylinux containers
+GCC_ROOT=$( find /usr/local/ -maxdepth 1 -iname '*gcc*' | sort -rn | head -1 )
+if [[ -d $GCC_ROOT ]]; then
+    export PATH="$GCC_ROOT/bin/:$PATH"
+    export LIBRARY_PATH="$GCC_ROOT/lib64:$LIBRARY_PATH"
+fi
+
 # Compile wheels
 for PYBIN in /opt/python/*3*/bin; do
 (
