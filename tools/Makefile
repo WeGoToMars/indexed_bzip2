@@ -12,3 +12,9 @@ bzcat: bzcat.o
 
 bzcat.o: bzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BZ2Reader.hpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/FileReader.hpp
 	$(CPP) $(CFLAGS) -c $< -o $@
+
+blockfinder: blockfinder.o
+	$(CPP) $(LFLAGS) $^ -o $@
+
+blockfinder.o: blockfinder.cpp ../indexed_bzip2/bzip2.h ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/FileReader.hpp
+	$(CPP) $(CFLAGS) -c $< -o $@
