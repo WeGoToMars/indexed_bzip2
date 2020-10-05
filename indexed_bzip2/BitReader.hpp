@@ -49,15 +49,23 @@ public:
     }
 
     BitReader( const uint8_t* buffer,
-               size_t         size ) :
+               size_t         size,
+               uint8_t        offsetBits = 0 ) :
         m_fileSizeBytes( size ),
-        m_inbuf( buffer, buffer + size )
-    {}
+        m_inbuf( buffer, buffer + size ),
+        m_offsetBits( offsetBits )
+    {
+        seek( 0, SEEK_SET ); /* seeks to m_offsetBits under the hood */
+    }
 
-    BitReader( std::vector<uint8_t>&& buffer ) :
+    BitReader( std::vector<uint8_t>&& buffer,
+               uint8_t                offsetBits = 0 ) :
         m_fileSizeBytes( buffer.size() ),
-        m_inbuf( std::move( buffer ) )
-    {}
+        m_inbuf( std::move( buffer ) ),
+        m_offsetBits( offsetBits )
+    {
+        seek( 0, SEEK_SET ); /* seeks to m_offsetBits under the hood */
+    }
 
     BitReader( BitReader&& ) = default;
 
@@ -122,7 +130,7 @@ public:
     tell() const override
     {
         if ( m_seekable ) {
-            return ( ftell( fp() ) - m_inbuf.size() + m_inbufPos ) * 8ULL - m_inbufBitCount;
+            return ( ftell( fp() ) - m_inbuf.size() + m_inbufPos ) * 8ULL - m_inbufBitCount - m_offsetBits;
         }
         return m_readBitsCount;
     }
@@ -149,7 +157,7 @@ public:
     size_t
     size() const override
     {
-        return m_fileSizeBytes * 8;
+        return m_fileSizeBytes * 8 - m_offsetBits;
     }
 
     const std::vector<std::uint8_t>&
@@ -177,6 +185,7 @@ private:
     size_t m_fileSizeBytes = 0;
 
     std::vector<uint8_t> m_inbuf;
+    uint8_t m_offsetBits = 0; /** ignore the first m_offsetBits in m_inbuf. Only used when initialized with a buffer. */
     uint32_t m_inbufPos = 0; /** stores current position of first valid byte in buffer */
     bool m_lastReadSuccessful = true;
 
@@ -263,6 +272,8 @@ BitReader::seek( long long int offsetBits,
         offsetBits = size() + offsetBits;
         break;
     }
+
+    offsetBits += m_offsetBits;
 
     if ( static_cast<size_t>( offsetBits ) == tell() ) {
         return offsetBits;
