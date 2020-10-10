@@ -1,5 +1,6 @@
 #include "bzip2.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
@@ -71,13 +72,15 @@ findBitString( const char* buffer,
 }
 #endif
 
-std::vector<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t> >
-createdShiftedBitStringLUT( uint64_t bitString,
-                            uint8_t  bitStringSize )
-{
-    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
 
-    std::vector<std::pair<uint64_t, uint64_t> > shiftedBitStrings( nWildcardBits );
+template<uint8_t bitStringSize>
+constexpr auto
+createdShiftedBitStringLUTArray( uint64_t bitString )
+{
+    constexpr auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
+    using ShiftedLUTTable = std::array<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t>,
+                                       nWildcardBits>;
+    ShiftedLUTTable shiftedBitStrings;
 
     uint64_t shiftedBitString = bitString;
     uint64_t shiftedBitMask = std::numeric_limits<uint64_t>::max() >> nWildcardBits;
@@ -85,6 +88,27 @@ createdShiftedBitStringLUT( uint64_t bitString,
         shiftedBitStrings[i] = std::make_pair( shiftedBitString, shiftedBitMask );
         shiftedBitString <<= 1;
         shiftedBitMask   <<= 1;
+    }
+
+    return shiftedBitStrings;
+}
+
+
+auto
+createdShiftedBitStringLUT( uint64_t bitString,
+                            uint8_t  bitStringSize )
+{
+    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
+    using ShiftedLUTTable = std::vector<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t> >;
+    ShiftedLUTTable shiftedBitStrings( nWildcardBits );
+
+    uint64_t shiftedBitString = bitString;
+    uint64_t shiftedBitMask = std::numeric_limits<uint64_t>::max() >> nWildcardBits;
+    for ( size_t i = 0; i < nWildcardBits; ++i ) {
+        shiftedBitStrings[i] = std::make_pair( shiftedBitString, shiftedBitMask );
+        shiftedBitString <<= 1;
+        shiftedBitMask   <<= 1;
+        assert( ( shiftedBitString & shiftedBitMask ) == shiftedBitString );
     }
 
     return shiftedBitStrings;
@@ -132,36 +156,105 @@ findBitString( const char* buffer,
                size_t      bufferSize,
                uint64_t    bitString )
 {
-    const auto& shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize );
+    #if 1
+    const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize );
+    #elif 0
+    /* Not much of a difference. If anything, it feels like 1% slower */
+    const auto shiftedBitStrings = createdShiftedBitStringLUTArray<bitStringSize>( bitString );
+    #else
+    /* This version actually takes 50% longer for some reason! */
+    constexpr std::array<std::pair<uint64_t, uint64_t>, 16> shiftedBitStrings = {
+        std::make_pair( 0x0000'3141'5926'5359ULL, 0x0000'ffff'ffff'ffffULL ),
+        std::make_pair( 0x0000'6282'b24c'a6b2ULL, 0x0001'ffff'ffff'fffeULL ),
+        std::make_pair( 0x0000'c505'6499'4d64ULL, 0x0003'ffff'ffff'fffcULL ),
+        std::make_pair( 0x0001'8a0a'c932'9ac8ULL, 0x0007'ffff'ffff'fff8ULL ),
+        std::make_pair( 0x0003'1415'9265'3590ULL, 0x000f'ffff'ffff'fff0ULL ),
+        std::make_pair( 0x0006'282b'24ca'6b20ULL, 0x001f'ffff'ffff'ffe0ULL ),
+        std::make_pair( 0x000c'5056'4994'd640ULL, 0x003f'ffff'ffff'ffc0ULL ),
+        std::make_pair( 0x0018'a0ac'9329'ac80ULL, 0x007f'ffff'ffff'ff80ULL ),
+        std::make_pair( 0x0031'4159'2653'5900ULL, 0x00ff'ffff'ffff'ff00ULL ),
+        std::make_pair( 0x0062'82b2'4ca6'b200ULL, 0x01ff'ffff'ffff'fe00ULL ),
+        std::make_pair( 0x00c5'0564'994d'6400ULL, 0x03ff'ffff'ffff'fc00ULL ),
+        std::make_pair( 0x018a'0ac9'329a'c800ULL, 0x07ff'ffff'ffff'f800ULL ),
+        std::make_pair( 0x0314'1592'6535'9000ULL, 0x0fff'ffff'ffff'f000ULL ),
+        std::make_pair( 0x0628'2b24'ca6b'2000ULL, 0x1fff'ffff'ffff'e000ULL ),
+        std::make_pair( 0x0c50'5649'94d6'4000ULL, 0x3fff'ffff'ffff'c000ULL ),
+        std::make_pair( 0x18a0'ac93'29ac'8000ULL, 0x7fff'ffff'ffff'8000ULL )
+    };
+    #endif
+
+    #if 0
+    std::cerr << "Shifted Bit Strings:\n";
+    for ( const auto [shifted, mask] : shiftedBitStrings ) {
+        std::cerr << "0x" << std::hex << shifted << " 0x" << mask << "\n";
+    }
+    #endif
 
     /* Simply load bytewise even if we could load more (uneven) bits by rounding down.
      * This makes this implementation much less performant in comparison to the "% 8 = 0" version! */
-    constexpr auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * 8 - bitStringSize ) / 8;
+    constexpr auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * CHAR_BIT - bitStringSize ) / CHAR_BIT;
     static_assert( nBytesToLoadPerIteration > 0,
                    "Bit string size must be smaller than or equal to 56 bit in order to load bytewise!" );
 
     /* Initialize buffer window. Note that we can't simply read an uint64_t because of the bit and byte order */
-    if ( bufferSize * 8 < bitStringSize ) {
+    if ( bufferSize * CHAR_BIT < bitStringSize ) {
         return std::numeric_limits<size_t>::max();
     }
     uint64_t window = 0;
     const auto nBytesToInitialize = sizeof( uint64_t ) - nBytesToLoadPerIteration;
     for ( size_t i = 0; i < std::min( nBytesToInitialize, bufferSize ); ++i ) {
-        window = ( window << 8 ) | static_cast<uint8_t>( buffer[i] );
+        window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i] );
     }
 
     for ( size_t i = nBytesToInitialize; i < bufferSize; i += nBytesToLoadPerIteration ) {
         size_t j = 0;
         for ( ; ( j < nBytesToLoadPerIteration ) && ( i + j < bufferSize ); ++j ) {
-            window = ( window << 8 ) | static_cast<uint8_t>( buffer[i+j] );
+            window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i+j] );
         }
 
         /* use pre-shifted search bit string values and masks to test for the search string in the larger window */
+        #define LOOP_METHOD 0
+        #if LOOP_METHOD == 0
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1       -O3 -DNDEBUG               : 1.7s */
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1       -O3 -DNDEBUG -march=native : 1.8s */
+        /* AMD Ryzen 9 3900X g++     10.2.0-5ubuntu1~20.04 -O3 -DNDEBUG               : 2.8s */
+        /* AMD Ryzen 9 3900X g++     10.2.0-5ubuntu1~20.04 -O3 -DNDEBUG -march=native : 3.0s */
+        size_t k = 0;
+        for ( const auto& [shifted, mask] : shiftedBitStrings ) {
+            if ( ( window & mask ) == shifted ) {
+                return ( i + j ) * CHAR_BIT - bitStringSize - k;
+            }
+            ++k;
+        }
+        #elif LOOP_METHOD == 1
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1       -O3 -DNDEBUG: 2.0s */
+        /* AMD Ryzen 9 3900X g++     10.2.0-5ubuntu1~20.04 -O3 -DNDEBUG: 3.3s */
         for ( size_t k = 0; k < shiftedBitStrings.size(); ++k ) {
-            if ( ( window & shiftedBitStrings[k].second ) == shiftedBitStrings[k].first ) {
-                return ( i + j ) * 8 - bitStringSize - k;
+            const auto& [shifted, mask] = shiftedBitStrings[k];
+            if ( ( window & mask ) == shifted ) {
+                return ( i + j ) * CHAR_BIT - bitStringSize - k;
             }
         }
+        #elif LOOP_METHOD == 2
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1       -O3 -DNDEBUG               : 2.0s */
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1       -O3 -DNDEBUG -march=native : 2.1s */
+        /* AMD Ryzen 9 3900X g++     10.2.0-5ubuntu1~20.04 -O3 -DNDEBUG               : 3.3s */
+        /* AMD Ryzen 9 3900X g++     10.2.0-5ubuntu1~20.04 -O3 -DNDEBUG -march=native : 3.6s */
+        for ( size_t k = 0; k < shiftedBitStrings.size(); ++k ) {
+            if ( ( window & shiftedBitStrings[k].second ) == shiftedBitStrings[k].first ) {
+                return ( i + j ) * CHAR_BIT - bitStringSize - k;
+            }
+        }
+        #elif LOOP_METHOD == 3
+        /* AMD Ryzen 9 3900X clang++ 10.0.0-4ubuntu1 -O3 -DNDEBUG : 2.0s */
+        const auto match = std::find_if(
+            shiftedBitStrings.begin(), shiftedBitStrings.end(),
+            [window] ( const auto& pair ) { return ( window & pair.second ) == pair.first; }
+        );
+        if ( match != shiftedBitStrings.end() ) {
+            return ( i + j ) * CHAR_BIT - bitStringSize - ( match - shiftedBitStrings.begin() );
+        }
+        #endif
     }
 
     return std::numeric_limits<size_t>::max();
@@ -181,36 +274,23 @@ findBitStrings( const std::string& filename )
     std::vector<char> buffer( 2 * 1024 * 1024 );
     size_t nTotalBytesRead = 0;
     while ( true ) {
-        #ifdef BENCHMARK
-        const auto t0 = now();
-        #endif
         const auto nBytesRead = fread( buffer.data(), 1, buffer.size(), file );
-        #ifdef BENCHMARK
-        const auto t1 = now();
-        std::cerr << "Reading " << nBytesRead << " bytes took " << duration( t0, t1 ) << " seconds\n";
-        #endif
         if ( nBytesRead == 0 ) {
             break;
         }
 
-        #ifdef BENCHMARK
-        const auto t2 = now();
-        #endif
-        for ( size_t bitpos = 0; bitpos < nBytesRead * 8; ) {
-            const auto relpos = findBitString<bitStringSize>( buffer.data() + bitpos / 8, nBytesRead - bitpos / 8, bitString );
+        for ( size_t bitpos = 0; bitpos < nBytesRead * CHAR_BIT; ) {
+            const auto relpos = findBitString<bitStringSize>( buffer.data() + bitpos / CHAR_BIT,
+                                                              nBytesRead - bitpos / CHAR_BIT,
+                                                              bitString );
             if ( relpos == std::numeric_limits<size_t>::max() ) {
                 break;
             }
             bitpos += relpos;
-            blockOffsets.push_back( nTotalBytesRead * 8 + bitpos );
+            blockOffsets.push_back( nTotalBytesRead * CHAR_BIT + bitpos );
             bitpos += bitStringSize;
         }
         nTotalBytesRead += nBytesRead;
-        #ifdef BENCHMARK
-        const auto t3 = now();
-
-        std::cerr << "Searching bit string took " << duration( t2, t3 ) << " seconds\n";
-        #endif
     }
 
     return blockOffsets;
@@ -256,43 +336,29 @@ findBitStrings3( const std::string& filename )
     size_t nTotalBytesRead = 0;
     uint64_t window = 0;
     while ( true ) {
-        #ifdef BENCHMARK
-        const auto t0 = now();
-        #endif
         const auto nBytesRead = fread( buffer.data(), 1, buffer.size(), file );
-        #ifdef BENCHMARK
-        const auto t1 = now();
-        std::cerr << "Reading " << nBytesRead << " bytes took " << duration( t0, t1 ) << " seconds\n";
-        #endif
         if ( nBytesRead == 0 ) {
             break;
         }
 
-        #ifdef BENCHMARK
-        const auto t2 = now();
-        #endif
         for ( size_t i = 0; i < nBytesRead; ++i ) {
-            auto byte = static_cast<uint8_t>( buffer[i] );
-            for ( int j = 0; j < 8; ++j ) {
-                const auto bit = ( byte >> ( 7 - j ) ) & 1U;
+            const auto byte = static_cast<uint8_t>( buffer[i] );
+            for ( int j = 0; j < CHAR_BIT; ++j ) {
+                const auto bit = ( byte >> ( CHAR_BIT - 1 - j ) ) & 1U;
                 window <<= 1;
                 window |= bit;
-                window &= 0xFFFFFFFFFFFF;
-                if ( ( nTotalBytesRead + i ) * 8 + j + 1 < bitStringSize ) {
+                if ( ( nTotalBytesRead + i ) * CHAR_BIT + j < bitStringSize ) {
                     continue;
                 }
 
-                if ( window == bitString ) {
-                    blockOffsets.push_back( nTotalBytesRead + i + j - bitStringSize );
+                if ( ( window & 0xFFFF'FFFF'FFFFULL ) == bitString ) {
+                    /* Dunno why the + 1 is necessary but it works (tm) */
+                    blockOffsets.push_back( ( nTotalBytesRead + i ) * CHAR_BIT + j + 1 - bitStringSize );
                 }
             }
         }
 
         nTotalBytesRead += nBytesRead;
-        #ifdef BENCHMARK
-        const auto t3 = now();
-        std::cerr << "Searching bit string took " << duration( t2, t3 ) << " seconds\n";
-        #endif
     }
 
     return blockOffsets;
@@ -308,23 +374,26 @@ int main( int argc, char** argv )
     const std::string filename ( argv[1] );
 
     /* comments contain tests on firefox-66.0.5.tar.bz2 */
-    const auto blockOffsets = findBitStrings( filename ); // ~520ms
-    //const auto blockOffsets = findBitStrings2( filename ); // ~9.5s
-    //const auto blockOffsets = findBitStrings3( filename ); // ~520ms
-    /* lookup table and manual minimal bit reader are virtually equally fast
-     * probably because the encrypted SSD is the limited factor
-     * Need to benchmark on buffer -> simply read whole file into buffer and benchmark inside C++
-     * => I don't have statistical means (yet) but it feels like the non LUT version is a tad slower
-     * Reading 2097152 bytes took 0.000407302 seconds
-     * Searching bit string took 0.0163392 seconds
+    const auto blockOffsets = findBitStrings( filename ); // ~520ms // ~1.7s on /dev/shm with 911MiB large.bz2
+    //const auto blockOffsets = findBitStrings2( filename ); // ~9.5s // ~100s on /dev/shm with 911MiB large.bz2
+    //const auto blockOffsets = findBitStrings3( filename ); // ~520ms // 6.4s on /dev/shm with 911MiB large.bz2
+    /* lookup table and manual minimal bit reader were virtually equally fast
+     * probably because the encrypted SSD was the limiting factor -> repeat with /dev/shm
      * => searching is roughly 4x slower, so multithreading on 4 threads should make it equally fast,
      *    which then makes double-buffering a viable option for a total speedup of hopefully 8x!
      */
 
+    BitReader bitReader( filename );
     std::cerr << "Block offsets  :\n";
-    for ( const auto& offset : blockOffsets ) {
-        std::cerr << offset / 8 << " B " << offset % 8 << " b\n";
+    for ( const auto offset : blockOffsets ) {
+        std::cerr << offset / 8 << " B " << offset % 8 << " b";
+        if ( ( offset >= 0 ) && ( offset < bitReader.size() ) ) {
+            bitReader.seek( offset );
+            std::cerr << " -> magic bytes: 0x" << std::hex << bitReader.read( 32 ) << std::dec;
+        }
+        std::cerr << "\n";
     }
+    std::cerr << "Found " << blockOffsets.size() << " blocks\n";
 
     return 0;
 }
