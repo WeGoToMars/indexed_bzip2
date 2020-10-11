@@ -210,6 +210,8 @@ public:
         assert( at( offset ).state == BlockData::State::UNDECODED );
         at( offset ).state = BlockData::State::PROCESSING;
 
+        m_changed.notify_all();
+
         return offset;
     }
 
@@ -292,6 +294,7 @@ public:
         erase( offsetBitsEncoded );
 
         updateDecodedOffsets( offsetBitsEncoded );
+        m_changed.notify_all();
     }
 
     void
@@ -311,8 +314,7 @@ public:
 
             if ( ( block.offsetBitsEncoded  == std::numeric_limits<size_t>::max() ) ||
                  ( block.offsetBytesDecoded == std::numeric_limits<size_t>::max() ) ||
-                 ( block.encodedBitsCount   == 0 ) ||
-                 ( block.isEndOfStreamBlock != ( block.decodedBytesCount == 0 ) ) )
+                 ( block.encodedBitsCount   == 0 ) )
             {
                 std::stringstream msg;
                 msg << "Found block with invalid data during finalizing!\n";

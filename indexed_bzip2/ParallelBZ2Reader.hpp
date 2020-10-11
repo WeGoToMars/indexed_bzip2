@@ -62,7 +62,7 @@ public:
     ParallelBZ2Reader( T_Args&&... args ) :
         BZ2Reader( std::forward<T_Args>( args )... ),
         m_blockFinder( &ParallelBZ2Reader::blockFinderMain, this ),
-        m_threadPool( std::thread::hardware_concurrency() ),
+        m_threadPool( std::max( 1, static_cast<int>( std::thread::hardware_concurrency() ) ) ),
         m_workDispatcher( &ParallelBZ2Reader::workDispatcherMain, this )
     {}
 
@@ -93,9 +93,6 @@ public:
                 const auto wasComplete = m_blocks.completed();
                 const auto [buffer2, size2] = m_blocks.data( m_currentPosition );
 
-                //if ( ( buffer2 == nullptr ) && !wasComplete ) {
-                //    std::cerr << "buffer null but database not complete!\n";
-                //}
                 if ( ( buffer2 == nullptr ) && wasComplete ) {
                     m_atEndOfFile = true;
                     return 0;
@@ -108,12 +105,8 @@ public:
                 }
             }
 
-            const auto nBytesToDecode = std::min( size,
-                                                  std::min( m_decodedBuffer.size(),
-                                                            nBytesToRead - nBytesDecoded ) );
-            for ( size_t i = 0; i < nBytesToDecode; ++i ) {
-                m_decodedBuffer[i] = buffer[i];
-            }
+            const auto nBytesToDecode = std::min( size, nBytesToRead - nBytesDecoded );
+            m_decodedBuffer = std::vector<char>( buffer, buffer + nBytesToDecode );
             m_decodedBufferPos = nBytesToDecode;
 
             nBytesDecoded += flushOutputBuffer( outputFileDescriptor,
@@ -180,6 +173,7 @@ private:
         m_blocks.finalize();
         m_blockToDataOffsets = m_blocks.blockOffsets();
         m_blockToDataOffsetsComplete = true;
+        std::cerr << "EXIT Block Finder\n";
     }
 
     void
@@ -213,6 +207,7 @@ private:
         for ( auto& future : futures ) {
             future.get();
         }
+        std::cerr << "EXIT Work Dispatcher\n";
     }
 
     void
@@ -253,6 +248,26 @@ private:
         decodedData.resize( decodedDataSize );
 
         const auto encodedBitsCount = bitReader.tell() - blockOffset;
+
+        /* Check whether the next block is an EOS block, which has a different magic byte string
+         * and therefore will not be found by the block finder! Such a block will span 48 + 32 + (0..7) bits.
+         * However, the last 0 to 7 bits are only padding and not needed! */
+        if ( !bitReader.eof() ) {
+            const auto eosBlockOffset = bitReader.tell();
+            std::vector<uint8_t> buffer( ( bzip2::MAGIC_BITS_SIZE + 32 ) / CHAR_BIT );
+            bitReader.read( reinterpret_cast<char*>( buffer.data() ), buffer.size() );
+            uint64_t bits = 0;
+            for ( int i = 0; i < bzip2::MAGIC_BITS_SIZE / CHAR_BIT; ++i ) {
+                bits = ( bits << CHAR_BIT ) | static_cast<uint64_t>( buffer[i] );
+            }
+            //std::cerr << std::hex << "Found bits:" << bits << "\n";
+            if ( bits == bzip2::MAGIC_BITS_EOS ) {
+                m_blocks.insertBlock( eosBlockOffset, std::move( buffer ) );
+            }
+        }
+
+        /* Note that calling setBlockData might complete the BlockDatabase,
+         * so only call after possibly inserting the next block */
         m_blocks.setBlockData( blockOffset, encodedBitsCount, std::move( decodedData ),
                                block.bwdata.dataCRC, block.bwdata.headerCRC, block.eos() );
 

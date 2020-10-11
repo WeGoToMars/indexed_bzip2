@@ -27,20 +27,23 @@ int main( int argc, char** argv )
         return 1;
     }
     const std::string filename ( argv[1] );
-    const int bufferSize = argc > 2 ? std::atoi( argv[2] ) : 333;
+    const int bufferSize = argc > 2 ? std::atoi( argv[2] ) : 0;
 
     std::cerr << "Concurrency: " << std::thread::hardware_concurrency() << "\n";
 
     ParallelBZ2Reader reader( filename );
     size_t nBytesWrittenTotal = 0;
-    do {
-        std::vector<char> buffer( bufferSize, 0 );
-        const size_t nBytesRead = reader.read( -1, buffer.data(), buffer.size() );
-        assert( nBytesRead <= buffer.size() );
-        const auto nBytesWritten = write( STDOUT_FILENO, buffer.data(), nBytesRead );
-        nBytesWrittenTotal += nBytesRead;
-    } while ( !reader.eof() );
-    //const auto nBytesWritten = reader.read( STDOUT_FILENO, nullptr, 2447359 );
+    if ( bufferSize > 0 ) {
+        do {
+            std::vector<char> buffer( bufferSize, 0 );
+            const size_t nBytesRead = reader.read( -1, buffer.data(), buffer.size() );
+            assert( nBytesRead <= buffer.size() );
+            const auto nBytesWritten = write( STDOUT_FILENO, buffer.data(), nBytesRead );
+            nBytesWrittenTotal += nBytesRead;
+        } while ( !reader.eof() );
+    } else {
+        reader.read( STDOUT_FILENO );
+    }
     const auto offsets = reader.blockOffsets();
     //reader.seek( 900000 );
 
@@ -55,6 +58,7 @@ int main( int argc, char** argv )
         << it->first / 8 << " B " << it->first % 8 << " b : "  << it->second / 8 << " B " << " -> magic bytes: 0x"
         << std::hex << bitreader.read( 32 ) << std::dec << "\n";
     }
+    std::cerr << "Found " << offsets.size() << " blocks\n";
 
     return 0;
 }
