@@ -70,24 +70,37 @@ Performance profiling and tracing is done with [Score-P](https://www.vi-hps.org/
 This is one way, you could install Score-P with most of the functionalities on Debian 10.
 
 ```bash
+# Install Dependencies
+# Ubuntu 18.04
+sudo apt-get install libopenmpi-dev openmpi gcc-8-plugin-dev llvm-dev libclang-dev libunwind-dev \
+                     libopen-trace-format-dev otf-trace
+# Ubuntu 20.04
+sudo apt-get install libopenmpi-dev gcc-10-plugin-dev llvm-dev libclang-dev libunwind-dev \
+                     libopen-trace-format-dev otf-trace binutils-dev
+
 # Install PAPI
 wget http://icl.utk.edu/projects/papi/downloads/papi-5.7.0.tar.gz
 tar -xf papi-5.7.0.tar.gz
 cd papi-5.7.0/src
 ./configure
-make -j
+make -j $( nproc )
 sudo make install
 
-# Install Dependencies
-sudo apt-get install libopenmpi-dev openmpi gcc-8-plugin-dev llvm-dev libclang-dev libunwind-dev libopen-trace-format-dev otf-trace
+# Install OTF2
+wget https://www.vi-hps.org/cms/upload/packages/otf2/otf2-2.2.tar.gz
+tar -xf otf2-2.2.tar.gz
+cd otf2-2.2.tar.gz
+./configure
+make -j $( nproc )
+make install # installs into /opt/otf2 by default
 
 # Install Score-P (to /opt/scorep)
 wget https://www.vi-hps.org/cms/upload/packages/scorep/scorep-6.0.tar.gz
 tar -xf scorep-6.0.tar.gz
 cd scorep-6.0
 ./configure --with-mpi=openmpi --enable-shared
-make -j
-make install
+make -j $( nproc )
+make install # installs into /opt/scorep by default
 
 # Add /opt/scorep to your path variables on shell start
 cat <<EOF >> ~/.bashrc
