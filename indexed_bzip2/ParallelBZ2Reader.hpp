@@ -86,23 +86,18 @@ public:
         size_t nBytesDecoded = flushOutputBuffer( outputFileDescriptor, outputBuffer, nBytesToRead );
 
         while ( ( nBytesDecoded < nBytesToRead ) && !eof() ) {
-            /** @todo CLEAN UP this mess. I just wanted some results for now ... */
-            const uint8_t* buffer = nullptr;
-            size_t size = 0;
-            while ( buffer == nullptr ) {
-                const auto wasComplete = m_blocks.completed();
-                const auto [buffer2, size2] = m_blocks.data( m_currentPosition );
+            const auto wasComplete = m_blocks.completed();
+            const auto [buffer, size] = m_blocks.data( m_currentPosition );
 
-                if ( ( buffer2 == nullptr ) && wasComplete ) {
+            if ( buffer == nullptr ) {
+                if ( wasComplete ) {
+                    std::cerr << "EOF reached\n";
                     m_atEndOfFile = true;
-                    return 0;
+                    return nBytesDecoded;
                 }
-                buffer = buffer2;
-                size = size2;
-                if ( buffer == nullptr ) {
-                    using namespace std::chrono_literals;
-                    std::this_thread::sleep_for( 100ms );
-                }
+
+                m_blocks.waitUntilChanged( 0.1 );
+                continue;
             }
 
             const auto nBytesToDecode = std::min( size, nBytesToRead - nBytesDecoded );
@@ -260,7 +255,6 @@ private:
             for ( int i = 0; i < bzip2::MAGIC_BITS_SIZE / CHAR_BIT; ++i ) {
                 bits = ( bits << CHAR_BIT ) | static_cast<uint64_t>( buffer[i] );
             }
-            //std::cerr << std::hex << "Found bits:" << bits << "\n";
             if ( bits == bzip2::MAGIC_BITS_EOS ) {
                 m_blocks.insertBlock( eosBlockOffset, std::move( buffer ) );
             }
@@ -270,12 +264,6 @@ private:
          * so only call after possibly inserting the next block */
         m_blocks.setBlockData( blockOffset, encodedBitsCount, std::move( decodedData ),
                                block.bwdata.dataCRC, block.bwdata.headerCRC, block.eos() );
-
-        /** @todo try decoding the next block or maybe just insert the end offset into m_blocks if it does not
-         *        exist already! Necessary because EOS blocks have different magic bytes. */
-
-        //std::cerr << "Decoded block at " << blockOffset << " on thread " << std::this_thread::get_id()
-        //          << ", which contained " << decodedDataSize << " bytes\n";
     }
 
 private:

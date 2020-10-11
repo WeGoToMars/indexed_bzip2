@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -50,7 +51,8 @@ int main( int argc, char** argv )
     BitReader bitreader( filename );
 
     //std::cerr << "Calculated CRC : 0x" << std::hex << reader.crc() << std::dec << "\n";
-    std::cerr << "Stream size    : " << nBytesWrittenTotal << " B\n";
+    std::cerr << "Stream size written: " << nBytesWrittenTotal << " B\n";
+    std::cerr << "Stream size as reported: " << reader.size() << " B\n";
     std::cerr << "Block offsets  :\n";
     for ( auto it = offsets.begin(); it != offsets.end(); ++it ) {
         bitreader.seek( it->first );
@@ -59,6 +61,10 @@ int main( int argc, char** argv )
         << std::hex << bitreader.read( 32 ) << std::dec << "\n";
     }
     std::cerr << "Found " << offsets.size() << " blocks\n";
+
+    if ( nBytesWrittenTotal != reader.size() ) {
+        throw std::logic_error( "Wrote less bytes than decoded stream is large!" );
+    }
 
     return 0;
 }

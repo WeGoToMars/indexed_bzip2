@@ -176,6 +176,18 @@ public:
 
 protected:
     /**
+     * @param  outputBuffer A char* to which the data is written.
+     *                      You should ensure that at least @p maxBytesToFlush bytes can fit there!
+     * @return The number of actually flushed bytes, which might be hindered,
+     *         e.g., if the output file descriptor can't be written to!
+     */
+    size_t
+    flushOutputBuffer( int    outputFileDescriptor = -1,
+                       char*  outputBuffer         = nullptr,
+                       size_t maxBytesToFlush      = std::numeric_limits<size_t>::max() );
+
+private:
+    /**
      * Undo burrows-wheeler transform on intermediate buffer @ref dbuf to @ref outBuf
      *
      * Burrows-wheeler transform is described at:
@@ -194,17 +206,6 @@ protected:
     {
         return m_bitReader.read( nBits );
     }
-
-    /**
-     * @param  outputBuffer A char* to which the data is written.
-     *                      You should ensure that at least @p maxBytesToFlush bytes can fit there!
-     * @return The number of actually flushed bytes, which might be hindered,
-     *         e.g., if the output file descriptor can't be written to!
-     */
-    size_t
-    flushOutputBuffer( int    outputFileDescriptor = -1,
-                       char*  outputBuffer         = nullptr,
-                       size_t maxBytesToFlush      = std::numeric_limits<size_t>::max() );
 
     BlockHeader
     readBlockHeader( size_t bitsOffset );

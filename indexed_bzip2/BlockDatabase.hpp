@@ -403,7 +403,7 @@ public:
 
             /* Use linear search to find fitting offset and if not found wait for new data.
              * Bisection won't work because some of the blocks might still be uninitialized and
-             * therefore the offsetBytesDecoded won't be monotinically increasing. */
+             * therefore the offsetBytesDecoded won't be monotonically increasing. */
             const auto block = std::find_if(
                 rbegin(), rend(),
                 [offsetBytesDecoded] ( const auto& x ) {
