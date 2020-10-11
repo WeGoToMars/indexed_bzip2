@@ -20,7 +20,7 @@ bzcat.o: bzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BZ2Reader.hpp ../
 pbzcat: pbzcat.o
 	$(CPP) $(LFLAGS) $^ -o $@
 
-pbzcat.o: pbzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/ParallelBZ2Reader.hpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/ThreadSafeQueue.hpp ../indexed_bzip2/ThreadPool.hpp ../indexed_bzip2/FileReader.hpp ../indexed_bzip2/BitStringFinder.hpp
+pbzcat.o: pbzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BlockDatabase.hpp ../indexed_bzip2/ParallelBZ2Reader.hpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/ThreadSafeQueue.hpp ../indexed_bzip2/ThreadPool.hpp ../indexed_bzip2/FileReader.hpp ../indexed_bzip2/BitStringFinder.hpp
 	$(CPP) $(CFLAGS) -c $< -o $@
 
 blockfinder: blockfinder.o

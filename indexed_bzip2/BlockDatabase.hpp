@@ -153,7 +153,8 @@ public:
      * This is e.g. used by the block finder thread, which only looks for BZ2 blocks based on the magic bit string.
      */
     void
-    insertBlock( size_t offsetBitsEncoded )
+    insertBlock( size_t                 offsetBitsEncoded,
+                 std::vector<uint8_t>&& encodedData = {} )
     {
         std::lock_guard guard( m_mutex );
 
@@ -167,6 +168,7 @@ public:
             return;
         }
 
+        it->second.encodedData = std::move( encodedData );
         it->second.offsetBitsEncoded = offsetBitsEncoded;
         if ( it == begin() ) {
             it->second.offsetBytesDecoded = 0;
@@ -227,15 +229,15 @@ public:
 
         auto& block = this->operator[]( offsetBitsEncoded );
 
-        block.offsetBitsEncoded       = offsetBitsEncoded;
-        block.encodedBitsCount        = encodedBitsCount;
-        block.decodedBytesCount       = decodedData.size();
-        block.encodedData             = std::vector<uint8_t>(); /* Note that clear will not free allocated memory! */
-        block.decodedData             = std::move( decodedData );
-        block.calculatedCRC           = calculatedCRC;
-        block.expectedCRC             = expectedCRC;
-        block.isEndOfStreamBlock      = isEndOfStreamBlock;
-        block.state                   = BlockData::State::PROCESSED;
+        block.offsetBitsEncoded  = offsetBitsEncoded;
+        block.encodedBitsCount   = encodedBitsCount;
+        block.decodedBytesCount  = decodedData.size();
+        block.encodedData        = std::vector<uint8_t>(); /* Note that clear will not free allocated memory! */
+        block.decodedData        = std::move( decodedData );
+        block.calculatedCRC      = calculatedCRC;
+        block.expectedCRC        = expectedCRC;
+        block.isEndOfStreamBlock = isEndOfStreamBlock;
+        block.state              = BlockData::State::PROCESSED;
 
         updateDecodedOffsets( offsetBitsEncoded );
 
@@ -318,10 +320,18 @@ public:
                 throw std::logic_error( msg.str() );
             }
 
+            if ( block.isEndOfStreamBlock != ( block.decodedBytesCount == 0 ) ) {
+                std::stringstream msg;
+                msg << "Found non EOS block without any payload!\n";
+                msg << block;
+                throw std::logic_error( msg.str() );
+            }
+
             block.encodedData = std::vector<uint8_t>(); // clear does not free the allocated memory!
         }
 
         m_state = State::COMPLETE;
+        m_changed.notify_all();
     }
 
     void

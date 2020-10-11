@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -122,6 +123,17 @@ public:
 
     uint32_t
     read( uint8_t );
+
+    size_t
+    read( char*  outputBuffer,
+          size_t nBytesToRead )
+    {
+        const auto oldTell = tell();
+        for ( size_t i = 0; i < nBytesToRead; ++i ) {
+            outputBuffer[i] = static_cast<char>( read( CHAR_BIT ) );
+        }
+        return tell() - oldTell;
+    }
 
     /**
      * @return current position / number of bits already read.

@@ -156,7 +156,7 @@ public:
      * @param[out] outputBuffer should at least be large enough to hold @p nBytesToRead bytes
      * @return number of bytes written
      */
-    int
+    size_t
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
           const size_t nBytesToRead = std::numeric_limits<size_t>::max() )

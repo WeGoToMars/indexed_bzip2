@@ -144,15 +144,11 @@ private:
     void
     blockFinderMain()
     {
-        constexpr auto magicBits = 0x314159265359ULL;
-        constexpr auto magicBitsEOS = 0x177245385090ULL;
-        constexpr auto magicBitsSize = 48;
-
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
-            ? BitStringFinder<2>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
-                                  m_bitReader.buffer().size(), { magicBits, magicBitsEOS }, magicBitsSize )
-            : BitStringFinder<2>( m_bitReader.fileno(), { magicBits, magicBitsEOS }, magicBitsSize );
+            ? BitStringFinder<1>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
+                                  m_bitReader.buffer().size(), { bzip2::MAGIC_BITS_BLOCK }, bzip2::MAGIC_BITS_SIZE )
+            : BitStringFinder<1>( m_bitReader.fileno(), { bzip2::MAGIC_BITS_BLOCK }, bzip2::MAGIC_BITS_SIZE );
 
         /* Only hardware_concurrency slows down decoding! I guess because in the worst case all decoding
          * threads finish at the same time and now the bit string finder would need to find n new blocks
