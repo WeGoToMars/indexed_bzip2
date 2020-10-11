@@ -28,6 +28,75 @@ ceilDiv( I1 dividend,
 {
     return ( dividend + divisor - 1 ) / divisor;
 }
+
+
+auto
+createdShiftedBitStringLUT( uint64_t bitString,
+                            uint8_t  bitStringSize )
+{
+    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
+    using ShiftedLUTTable = std::vector<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t> >;
+    ShiftedLUTTable shiftedBitStrings( nWildcardBits );
+
+    uint64_t shiftedBitString = bitString;
+    uint64_t shiftedBitMask = std::numeric_limits<uint64_t>::max() >> nWildcardBits;
+    for ( size_t i = 0; i < nWildcardBits; ++i ) {
+        shiftedBitStrings[i] = std::make_pair( shiftedBitString, shiftedBitMask );
+        shiftedBitString <<= 1;
+        shiftedBitMask   <<= 1;
+        assert( ( shiftedBitString & shiftedBitMask ) == shiftedBitString );
+    }
+
+    return shiftedBitStrings;
+}
+
+
+/**
+ * @param bitString the lowest bitStringSize bits will be looked for in the buffer
+ * @return size_t max if not found else position in buffer
+ */
+template<uint8_t bitStringSize>
+size_t
+findBitString( const char* buffer,
+               size_t      bufferSize,
+               uint64_t    bitString )
+{
+    const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize );
+
+    /* Simply load bytewise even if we could load more (uneven) bits by rounding down.
+     * This makes this implementation much less performant in comparison to the "% 8 = 0" version! */
+    constexpr auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * 8 - bitStringSize ) / 8;
+    static_assert( nBytesToLoadPerIteration > 0,
+                   "Bit string size must be smaller than or equal to 56 bit in order to load bytewise!" );
+
+    /* Initialize buffer window. Note that we can't simply read an uint64_t because of the bit and byte order */
+    if ( bufferSize * 8 < bitStringSize ) {
+        return std::numeric_limits<size_t>::max();
+    }
+    uint64_t window = 0;
+    const auto nBytesToInitialize = sizeof( uint64_t ) - nBytesToLoadPerIteration;
+    for ( size_t i = 0; i < std::min( nBytesToInitialize, bufferSize ); ++i ) {
+        window = ( window << 8 ) | static_cast<uint8_t>( buffer[i] );
+    }
+
+    for ( size_t i = nBytesToInitialize; i < bufferSize; i += nBytesToLoadPerIteration ) {
+        size_t j = 0;
+        for ( ; ( j < nBytesToLoadPerIteration ) && ( i + j < bufferSize ); ++j ) {
+            window = ( window << 8 ) | static_cast<uint8_t>( buffer[i+j] );
+        }
+
+        /* use pre-shifted search bit string values and masks to test for the search string in the larger window */
+        const auto match = std::find_if(
+            shiftedBitStrings.begin(), shiftedBitStrings.end(),
+            [window] ( const auto& pair ) { return ( window & pair.second ) == pair.first; }
+        );
+        if ( match != shiftedBitStrings.end() ) {
+            return ( i + j ) * 8 - bitStringSize - ( match - shiftedBitStrings.begin() );
+        }
+    }
+
+    return std::numeric_limits<size_t>::max();
+}
 }
 
 
@@ -98,21 +167,28 @@ public:
         while ( !eof() )
         {
             if ( m_bufferBitsRead >= m_buffer.size() * CHAR_BIT ) {
-                m_nTotalBytesRead += m_buffer.size();
-                m_bufferBitsRead = 0;
-                if ( m_file == nullptr ) {
-                    m_buffer.clear();
-                    return std::numeric_limits<size_t>::max();
-                }
-
-                /* read chunk of data from file and if file end is reached, break loop */
-                m_buffer.resize( m_fileChunksInBytes );
-                const auto nBytesRead = std::fread( m_buffer.data(), 1, m_buffer.size(), m_file );
-                m_buffer.resize( nBytesRead );
+                const auto nBytesRead = refillBuffer();
                 if ( nBytesRead == 0 ) {
                     return std::numeric_limits<size_t>::max();
                 }
             }
+
+            #if 1
+
+            for ( ; m_bufferBitsRead < m_buffer.size() * CHAR_BIT; ) {
+                const auto relpos = findBitString<48>( m_buffer.data() + m_bufferBitsRead / CHAR_BIT,
+                                                       m_buffer.size() - m_bufferBitsRead / CHAR_BIT,
+                                                       m_bitStringsToFind[0] );
+                if ( relpos == std::numeric_limits<size_t>::max() ) {
+                    m_bufferBitsRead = m_buffer.size() * CHAR_BIT;
+                    break;
+                }
+                //std::cerr << "relpos: " << relpos << "\n";
+                m_bufferBitsRead += relpos + m_bitStringSize;
+                return m_nTotalBytesRead * CHAR_BIT + m_bufferBitsRead - m_bitStringSize;
+            }
+
+            #else
 
             const auto bitMask = mask( m_bitStringSize );
 
@@ -141,6 +217,7 @@ public:
                     }
                 }
             }
+            #endif
         }
 
         return std::numeric_limits<size_t>::max();
@@ -190,10 +267,27 @@ private:
         return masked;
     }
 
+    size_t
+    refillBuffer()
+    {
+        m_nTotalBytesRead += m_buffer.size();
+        m_bufferBitsRead = 0;
+        if ( m_file == nullptr ) {
+            m_buffer.clear();
+            return std::numeric_limits<size_t>::max();
+        }
+
+        /* read chunk of data from file and if file end is reached, break loop */
+        m_buffer.resize( m_fileChunksInBytes );
+        const auto nBytesRead = std::fread( m_buffer.data(), 1, m_buffer.size(), m_file );
+        m_buffer.resize( nBytesRead );
+        return nBytesRead;
+    }
+
 private:
     std::FILE* m_file = nullptr;
     /** This is not the current size of @ref m_buffer but the number of bytes to read from @ref m_file if it is empty */
-    const size_t m_fileChunksInBytes = 1*1024*1024;
+    const size_t m_fileChunksInBytes = 2*1024*1024;
     std::vector<char> m_buffer;
     /**
      * In some way this is the buffer for the input buffer.
