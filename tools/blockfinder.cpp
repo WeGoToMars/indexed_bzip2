@@ -163,7 +163,7 @@ findBitString( const char* buffer,
     const auto shiftedBitStrings = createdShiftedBitStringLUTArray<bitStringSize>( bitString );
     #else
     /* This version actually takes 50% longer for some reason! */
-    constexpr std::array<std::pair<uint64_t, uint64_t>, 16> shiftedBitStrings = {
+    constexpr std::array<std::pair<uint64_t, uint64_t>, 17> shiftedBitStrings = {
         std::make_pair( 0x0000'3141'5926'5359ULL, 0x0000'ffff'ffff'ffffULL ),
         std::make_pair( 0x0000'6282'b24c'a6b2ULL, 0x0001'ffff'ffff'fffeULL ),
         std::make_pair( 0x0000'c505'6499'4d64ULL, 0x0003'ffff'ffff'fffcULL ),
@@ -179,7 +179,8 @@ findBitString( const char* buffer,
         std::make_pair( 0x0314'1592'6535'9000ULL, 0x0fff'ffff'ffff'f000ULL ),
         std::make_pair( 0x0628'2b24'ca6b'2000ULL, 0x1fff'ffff'ffff'e000ULL ),
         std::make_pair( 0x0c50'5649'94d6'4000ULL, 0x3fff'ffff'ffff'c000ULL ),
-        std::make_pair( 0x18a0'ac93'29ac'8000ULL, 0x7fff'ffff'ffff'8000ULL )
+        std::make_pair( 0x18a0'ac93'29ac'8000ULL, 0x7fff'ffff'ffff'8000ULL ),
+        std::make_pair( 0x3141'5926'5359'0000ULL, 0xffff'ffff'ffff'0000ULL )
     };
     #endif
 
@@ -200,13 +201,14 @@ findBitString( const char* buffer,
     if ( bufferSize * CHAR_BIT < bitStringSize ) {
         return std::numeric_limits<size_t>::max();
     }
+    //std::cerr << "nBytesToLoadPerIteration: " << nBytesToLoadPerIteration << "\n"; // 2
     uint64_t window = 0;
     const auto nBytesToInitialize = sizeof( uint64_t ) - nBytesToLoadPerIteration;
     for ( size_t i = 0; i < std::min( nBytesToInitialize, bufferSize ); ++i ) {
         window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i] );
     }
 
-    for ( size_t i = nBytesToInitialize; i < bufferSize; i += nBytesToLoadPerIteration ) {
+    for ( size_t i = std::min( nBytesToInitialize, bufferSize ); i < bufferSize; i += nBytesToLoadPerIteration ) {
         size_t j = 0;
         for ( ; ( j < nBytesToLoadPerIteration ) && ( i + j < bufferSize ); ++j ) {
             window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i+j] );
@@ -271,23 +273,39 @@ findBitStrings( const std::string& filename )
     std::vector<size_t> blockOffsets;
 
     FILE* file = fopen( filename.c_str(), "rb" );
-    std::vector<char> buffer( 2 * 1024 * 1024 );
+    const auto movingBytesToKeep = ceilDiv( bitStringSize, CHAR_BIT ) * CHAR_BIT; // 6
+    std::vector<char> buffer( 2 * 1024 * 1024 + movingBytesToKeep ); // for performance testing
+    //std::vector<char> buffer( 53 ); // for bug testing with bit strings accross buffer boundaries
     size_t nTotalBytesRead = 0;
     while ( true ) {
-        const auto nBytesRead = fread( buffer.data(), 1, buffer.size(), file );
+        size_t nBytesRead = 0;
+        if ( nTotalBytesRead == 0 ) {
+            nBytesRead = fread( buffer.data(), 1, buffer.size(), file );
+            buffer.resize( nBytesRead );
+        } else {
+            std::memmove( buffer.data(), buffer.data() + buffer.size() - movingBytesToKeep, movingBytesToKeep );
+            nBytesRead = fread( buffer.data() + movingBytesToKeep, 1, buffer.size() - movingBytesToKeep, file );
+            buffer.resize( movingBytesToKeep + nBytesRead );
+        }
         if ( nBytesRead == 0 ) {
             break;
         }
 
         for ( size_t bitpos = 0; bitpos < nBytesRead * CHAR_BIT; ) {
-            const auto relpos = findBitString<bitStringSize>( buffer.data() + bitpos / CHAR_BIT,
-                                                              nBytesRead - bitpos / CHAR_BIT,
+            const auto byteOffset = bitpos / CHAR_BIT; // round down because we can't give bit precision
+            const auto relpos = findBitString<bitStringSize>( buffer.data() + byteOffset,
+                                                              buffer.size() - byteOffset,
                                                               bitString );
             if ( relpos == std::numeric_limits<size_t>::max() ) {
                 break;
             }
-            bitpos += relpos;
-            blockOffsets.push_back( nTotalBytesRead * CHAR_BIT + bitpos );
+            bitpos = byteOffset * CHAR_BIT + relpos;
+            const auto foundOffset = ( nTotalBytesRead > movingBytesToKeep
+                                       ? nTotalBytesRead - movingBytesToKeep
+                                       : nTotalBytesRead ) * CHAR_BIT + bitpos;
+            if ( blockOffsets.empty() || ( blockOffsets.back() != foundOffset ) ) {
+                blockOffsets.push_back( foundOffset );
+            }
             bitpos += bitStringSize;
         }
         nTotalBytesRead += nBytesRead;
@@ -389,7 +407,11 @@ int main( int argc, char** argv )
         std::cerr << offset / 8 << " B " << offset % 8 << " b";
         if ( ( offset >= 0 ) && ( offset < bitReader.size() ) ) {
             bitReader.seek( offset );
-            std::cerr << " -> magic bytes: 0x" << std::hex << bitReader.read( 32 ) << std::dec;
+            const auto magicBytes = bitReader.read( 32 );
+            std::cerr << " -> magic bytes: 0x" << std::hex << magicBytes << std::dec;
+            if ( magicBytes != 0x3141'5926 ) {
+                throw std::logic_error( "Magic Bytes do not match!" );
+            }
         }
         std::cerr << "\n";
     }

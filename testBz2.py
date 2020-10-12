@@ -240,6 +240,6 @@ if __name__ == '__main__':
     ]
 
     print( "Will test with", len( parameters ), "different bzip2 files" )
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor( max_workers = max( 4, os.cpu_count() // 2 ) ) as executor:
         for input, output in zip( parameters, executor.map( testBz2, parameters ) ):
             assert output == True
