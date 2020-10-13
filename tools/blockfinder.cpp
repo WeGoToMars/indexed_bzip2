@@ -96,9 +96,10 @@ createdShiftedBitStringLUTArray( uint64_t bitString )
 
 auto
 createdShiftedBitStringLUT( uint64_t bitString,
-                            uint8_t  bitStringSize )
+                            uint8_t  bitStringSize,
+                            bool     includeLastFullyShifted = false )
 {
-    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
+    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize + includeLastFullyShifted;
     using ShiftedLUTTable = std::vector<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t> >;
     ShiftedLUTTable shiftedBitStrings( nWildcardBits );
 
@@ -154,7 +155,8 @@ template<uint8_t bitStringSize>
 size_t
 findBitString( const char* buffer,
                size_t      bufferSize,
-               uint64_t    bitString )
+               uint64_t    bitString,
+               uint8_t     firstBitsToIgnore = 0 )
 {
     #if 1
     const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize );
@@ -191,6 +193,8 @@ findBitString( const char* buffer,
     }
     #endif
 
+    auto* const ubuffer = reinterpret_cast<const uint8_t*>( buffer );
+
     /* Simply load bytewise even if we could load more (uneven) bits by rounding down.
      * This makes this implementation much less performant in comparison to the "% 8 = 0" version! */
     constexpr auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * CHAR_BIT - bitStringSize ) / CHAR_BIT;
@@ -203,15 +207,27 @@ findBitString( const char* buffer,
     }
     //std::cerr << "nBytesToLoadPerIteration: " << nBytesToLoadPerIteration << "\n"; // 2
     uint64_t window = 0;
-    const auto nBytesToInitialize = sizeof( uint64_t ) - nBytesToLoadPerIteration;
-    for ( size_t i = 0; i < std::min( nBytesToInitialize, bufferSize ); ++i ) {
-        window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i] );
+    size_t i = 0;
+    for ( ; i < std::min( sizeof( uint64_t ), bufferSize ); ++i ) {
+        window = ( window << CHAR_BIT ) | ubuffer[i];
     }
 
-    for ( size_t i = std::min( nBytesToInitialize, bufferSize ); i < bufferSize; i += nBytesToLoadPerIteration ) {
-        size_t j = 0;
-        for ( ; ( j < nBytesToLoadPerIteration ) && ( i + j < bufferSize ); ++j ) {
-            window = ( window << CHAR_BIT ) | static_cast<uint8_t>( buffer[i+j] );
+    {
+        size_t k = 0;
+        for ( const auto& [shifted, mask] : shiftedBitStrings ) {
+            if ( ( window & mask ) == shifted ) {
+                const auto foundBitOffset = i * CHAR_BIT - bitStringSize - k;
+                if ( ( foundBitOffset >= firstBitsToIgnore ) && ( foundBitOffset < bufferSize * 8 ) ) {
+                    return foundBitOffset - firstBitsToIgnore;
+                }
+            }
+            ++k;
+        }
+    }
+
+    for ( ; i < bufferSize; ) {
+        for ( size_t j = 0; ( j < nBytesToLoadPerIteration ) && ( i < bufferSize ); ++j, ++i ) {
+            window = ( window << CHAR_BIT ) | ubuffer[i];
         }
 
         /* use pre-shifted search bit string values and masks to test for the search string in the larger window */
@@ -224,7 +240,7 @@ findBitString( const char* buffer,
         size_t k = 0;
         for ( const auto& [shifted, mask] : shiftedBitStrings ) {
             if ( ( window & mask ) == shifted ) {
-                return ( i + j ) * CHAR_BIT - bitStringSize - k;
+                return i * CHAR_BIT - bitStringSize - k;
             }
             ++k;
         }
@@ -273,7 +289,7 @@ findBitStrings( const std::string& filename )
     std::vector<size_t> blockOffsets;
 
     FILE* file = fopen( filename.c_str(), "rb" );
-    const auto movingBytesToKeep = ceilDiv( bitStringSize, CHAR_BIT ) * CHAR_BIT; // 6
+    const auto movingBytesToKeep = ceilDiv( bitStringSize, CHAR_BIT ); // 6
     std::vector<char> buffer( 2 * 1024 * 1024 + movingBytesToKeep ); // for performance testing
     //std::vector<char> buffer( 53 ); // for bug testing with bit strings accross buffer boundaries
     size_t nTotalBytesRead = 0;

@@ -10,9 +10,9 @@
 namespace {
 int gnTests = 0;
 int gnTestErrors = 0;
-}
 
 
+#if 0
 template<typename T>
 std::ostream&
 operator<<( std::ostream&  out,
@@ -24,6 +24,8 @@ operator<<( std::ostream&  out,
     }
     out << " }";
     return out;
+}
+#endif
 }
 
 
@@ -66,7 +68,8 @@ testBitStringFinder( uint64_t                          bitStringToFind,
     {
         /* test the version working on an input file by writing the buffer to a temporary file */
         const auto file = std::tmpfile();
-        std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file );
+        const auto nWritten = std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file );
+        std::cerr << "wrote " << buffer.size() << " bytes\n";
         /**
          * Flush the file so that BitReader sees the written data when accessing the file through the file descriptor.
          * Don't close file because:

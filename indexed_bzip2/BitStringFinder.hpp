@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <climits>
+#include <cstring>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -31,19 +33,41 @@ ceilDiv( I1 dividend,
     return ( dividend + divisor - 1 ) / divisor;
 }
 
+template<typename S, typename T>
+std::ostream&
+operator<<( std::ostream&  out,
+            std::pair<S,T> pair )
+{
+    out << "(" << pair.first << "," << pair.second << ")";
+    return out;
+}
+
+template<typename T>
+std::ostream&
+operator<<( std::ostream&  out,
+            std::vector<T> vector )
+{
+    out << "{ ";
+    for ( const auto value : vector ) {
+        out << value << ", ";
+    }
+    out << " }";
+    return out;
+}
 
 auto
 createdShiftedBitStringLUT( uint64_t bitString,
-                            uint8_t  bitStringSize )
+                            uint8_t  bitStringSize,
+                            bool     includeLastFullyShifted = false )
 {
-    const auto nWildcardBits = sizeof( uint64_t ) * 8 - bitStringSize;
+    const auto nWildcardBits = sizeof( uint64_t ) * CHAR_BIT - bitStringSize;
     using ShiftedLUTTable = std::vector<std::pair</* shifted value to compare to */ uint64_t, /* mask */ uint64_t> >;
-    ShiftedLUTTable shiftedBitStrings( nWildcardBits );
+    ShiftedLUTTable shiftedBitStrings( nWildcardBits + includeLastFullyShifted );
 
     uint64_t shiftedBitString = bitString;
     uint64_t shiftedBitMask = std::numeric_limits<uint64_t>::max() >> nWildcardBits;
-    for ( size_t i = 0; i < nWildcardBits; ++i ) {
-        shiftedBitStrings[i] = std::make_pair( shiftedBitString, shiftedBitMask );
+    for ( size_t i = 0; i < shiftedBitStrings.size(); ++i ) {
+        shiftedBitStrings[shiftedBitStrings.size() - 1 - i] = std::make_pair( shiftedBitString, shiftedBitMask );
         shiftedBitString <<= 1;
         shiftedBitMask   <<= 1;
         assert( ( shiftedBitString & shiftedBitMask ) == shiftedBitString );
@@ -58,45 +82,86 @@ createdShiftedBitStringLUT( uint64_t bitString,
  * @return size_t max if not found else position in buffer
  */
 size_t
-findBitString( const char* buffer,
-               size_t      bufferSize,
-               uint64_t    bitString,
-               uint8_t     bitStringSize )
+findBitString( const uint8_t* buffer,
+               size_t         bufferSize,
+               uint64_t       bitString,
+               uint8_t        bitStringSize,
+               uint8_t        firstBitsToIgnore = 0 )
 {
-    const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize );
+    std::cerr << "Find in buffer " << (void*)buffer << " sized " << bufferSize << "B ignoring the first "
+              << (int)firstBitsToIgnore << " bits\n";
 
     /* Simply load bytewise even if we could load more (uneven) bits by rounding down.
      * This makes this implementation much less performant in comparison to the "% 8 = 0" version! */
-    const auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * 8 - bitStringSize ) / 8;
+    const auto nBytesToLoadPerIteration = ( sizeof( uint64_t ) * CHAR_BIT - bitStringSize ) / CHAR_BIT;
     if ( nBytesToLoadPerIteration <= 0 ) {
         throw std::invalid_argument( "Bit string size must be smaller than or equal to 56 bit in order to "
                                      "load bytewise!" );
     }
 
     /* Initialize buffer window. Note that we can't simply read an uint64_t because of the bit and byte order */
-    if ( bufferSize * 8 < bitStringSize ) {
+    if ( bufferSize * CHAR_BIT < bitStringSize ) {
         return std::numeric_limits<size_t>::max();
     }
     size_t i = 0;
     uint64_t window = 0;
-    const auto nBytesToInitialize = sizeof( uint64_t ) - nBytesToLoadPerIteration;
-    for ( ; i < std::min( nBytesToInitialize, bufferSize ); ++i ) {
-        window = ( window << 8 ) | static_cast<uint8_t>( buffer[i] );
+    for ( ; i < std::min( sizeof( window ), bufferSize ); ++i ) {
+        window = ( window << CHAR_BIT ) | buffer[i];
     }
 
-    for ( ; i < bufferSize; i += nBytesToLoadPerIteration ) {
-        size_t j = 0;
-        for ( ; ( j < nBytesToLoadPerIteration ) && ( i + j < bufferSize ); ++j ) {
-            window = ( window << 8 ) | static_cast<uint8_t>( buffer[i+j] );
+    /* The extra checks on firstBitsToIgnore and foundBitOffset < bufferSize *8 are only necessary here at
+     * the beginning because the uint64_t "buffer" might not be all full and firstBitsToIgnore will also only
+     * matter for the first 8 bits. But in the tight loop below, these checks slow down the bit string finder
+     * from 2.0s to 2.7s! */
+    if ( firstBitsToIgnore >= CHAR_BIT ) {
+        throw std::invalid_argument( "Only up to 7 bits should be to be ignored. Else incremenent the input "
+                                     "buffer pointer!" );
+    }
+    {
+        std::cerr << "Check window: " << std::hex << window << std::dec << "\n";
+        /* Use pre-shifted search bit string values and masks to test for the search string in the larger window.
+         * Only for this very first check is it possible that we have the pattern fully shifted by
+         * nBytesToLoadPerIteration. That's why we need to iterate over a bit shift table which has one more
+         * entry than the tight loop below needs to have! In later iterations, i.e., in the tight loop down
+         * below, this can't happen because then the pattern woudl have been found in one of the prior iterations. */
+        size_t k = 0;
+        const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize, true );
+        for ( const auto& [shifted, mask] : shiftedBitStrings ) {
+            if ( ( window & mask ) == shifted ) {
+                const auto foundBitOffset = i * CHAR_BIT - bitStringSize - ( shiftedBitStrings.size() - 1 - k );
+                if ( ( foundBitOffset >= firstBitsToIgnore ) && ( foundBitOffset < bufferSize * CHAR_BIT ) ) {
+                    std::cerr << "return " << foundBitOffset << " - " << (int)firstBitsToIgnore
+                              << std::hex << ", window: " << window << ", mask: " << mask
+                              << ", masked: " << ( window & mask ) << ", shifted: " << shifted << std::dec
+                              << ", k: " << k << "\n";
+                    return foundBitOffset - firstBitsToIgnore;
+                }
+            }
+            ++k;
         }
+    }
+
+    /* This tight loop is the performance critical part! */
+    const auto shiftedBitStrings = createdShiftedBitStringLUT( bitString, bitStringSize, true );
+    for ( ; i < bufferSize; ) {
+        for ( size_t j = 0; ( j < nBytesToLoadPerIteration ) && ( i < bufferSize ); ++i, ++j ) {
+            window = ( window << CHAR_BIT ) | buffer[i];
+        }
+        std::cerr << "Check window: " << std::hex << window << std::dec << "\n";
 
         /* use pre-shifted search bit string values and masks to test for the search string in the larger window */
-        const auto match = std::find_if(
-            shiftedBitStrings.begin(), shiftedBitStrings.end(),
-            [window] ( const auto& pair ) { return ( window & pair.second ) == pair.first; }
-        );
-        if ( match != shiftedBitStrings.end() ) {
-            return ( i + j ) * 8 - bitStringSize - ( match - shiftedBitStrings.begin() );
+        size_t k = 0;
+        for ( const auto& [shifted, mask] : shiftedBitStrings ) {
+            std::cerr << "Check mask: " << std::hex << mask << " -> " << ( window & mask ) << " == " << shifted << std::dec << "\n";
+            if ( ( window & mask ) == shifted ) {
+                const auto foundBitOffset = i * CHAR_BIT - bitStringSize - ( shiftedBitStrings.size() - 1 - k );
+                std::cerr << "return " << foundBitOffset << " - " << (int)firstBitsToIgnore
+                          << std::hex << ", window: " << window << ", mask: " << mask
+                          << ", masked: " << ( window & mask ) << ", shifted: " << shifted << std::dec
+                          << ", k: " << k << "\n";
+                return i * CHAR_BIT - bitStringSize - ( shiftedBitStrings.size() - 1 - k );
+            }
+            ++k;
         }
     }
 
@@ -180,15 +245,16 @@ public:
 
             for ( ; m_bufferBitsRead < m_buffer.size() * CHAR_BIT; ) {
                 const auto byteOffset = m_bufferBitsRead / CHAR_BIT;
-                const auto relpos = findBitString( m_buffer.data() + byteOffset,
+                const auto firstBitsToIgnore = m_bufferBitsRead % CHAR_BIT;
+                const auto relpos = findBitString( reinterpret_cast<const uint8_t*>( m_buffer.data() ) + byteOffset,
                                                    m_buffer.size() - byteOffset,
-                                                   m_bitStringToFind, m_bitStringSize );
+                                                   m_bitStringToFind, m_bitStringSize, firstBitsToIgnore );
                 if ( relpos == std::numeric_limits<size_t>::max() ) {
                     m_bufferBitsRead = m_buffer.size() * CHAR_BIT;
                     break;
                 }
 
-                m_bufferBitsRead = byteOffset * CHAR_BIT + relpos;
+                m_bufferBitsRead += relpos;
 
                 const auto foundOffset = ( m_nTotalBytesRead > movingBytesToKeep
                                            ? m_nTotalBytesRead - movingBytesToKeep
@@ -266,19 +332,41 @@ private:
     size_t
     refillBuffer()
     {
-        /** @todo keep last n bits or bytes to find bit strings across block boundaries. old version worked because
-         * it used a moving window! */
         m_nTotalBytesRead += m_buffer.size();
-        m_bufferBitsRead = 0;
         if ( m_file == nullptr ) {
             m_buffer.clear();
             return std::numeric_limits<size_t>::max();
         }
 
-        /* read chunk of data from file and if file end is reached, break loop */
+        /* Read chunk of data from file into buffer. */
         m_buffer.resize( m_fileChunksInBytes );
-        const auto nBytesRead = std::fread( m_buffer.data(), 1, m_buffer.size(), m_file );
-        m_buffer.resize( nBytesRead );
+        size_t nBytesRead = 0;
+        if ( m_nTotalBytesRead == 0 ) {
+            m_bufferBitsRead = 0;
+            nBytesRead = std::fread( m_buffer.data(), 1, m_buffer.size(), m_file );
+            m_buffer.resize( nBytesRead );
+        } else {
+            /* If the bit string is only one bit long, then we don't need to keep bits from the current buffer.
+             * However for two bits, one bit might be at the end of the current and the other at the beginning of
+             * the next chunk, so we need to keep the last byte of that buffer but then mark the first 7 bits read
+             * to avoid returning duplicate offsets!
+             * For 8 bits, at worst 7 bits are in the current buffer and 1 in the next, so we need to keep 1 byte
+             * and mark 1 bit read in the new buffer.
+             * For 9 bits, keep 8 bits (1B) and mark 0 bits read. */
+            const auto movingBytesToKeep = ceilDiv( m_bitStringSize - 1, CHAR_BIT );
+            m_nTotalBytesRead -= movingBytesToKeep;
+            std::cerr << "movingBytesToKeep: " << movingBytesToKeep << ", buffer size: " << m_buffer.size() << "\n";
+            assert( movingBytesToKeep < m_buffer.size() );
+            m_bufferBitsRead = CHAR_BIT - ( m_bitStringSize - 1 ) % CHAR_BIT;
+            /* On subsequent refills, keep the last bits in order to find bit strings on buffer boundaries. */
+            std::memmove( m_buffer.data(), m_buffer.data() + m_buffer.size() - movingBytesToKeep, movingBytesToKeep );
+            nBytesRead = std::fread( m_buffer.data() + movingBytesToKeep,
+                                     /* element size in bytes */ 1,
+                                     m_buffer.size() - movingBytesToKeep,
+                                     m_file );
+            m_buffer.resize( movingBytesToKeep + nBytesRead );
+        }
+
         return nBytesRead;
     }
 
