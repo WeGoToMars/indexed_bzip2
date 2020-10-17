@@ -134,9 +134,9 @@ private:
     {
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
-            ? BitStringFinder( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
-                               m_bitReader.buffer().size(), bzip2::MAGIC_BITS_BLOCK, bzip2::MAGIC_BITS_SIZE )
-            : BitStringFinder( m_bitReader.fileno(), bzip2::MAGIC_BITS_BLOCK, bzip2::MAGIC_BITS_SIZE );
+            ? BitStringFinder<bzip2::MAGIC_BITS_SIZE>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
+                                                       m_bitReader.buffer().size(), bzip2::MAGIC_BITS_BLOCK )
+            : BitStringFinder<bzip2::MAGIC_BITS_SIZE>( m_bitReader.fileno(), bzip2::MAGIC_BITS_BLOCK );
 
         /* Only hardware_concurrency slows down decoding! I guess because in the worst case all decoding
          * threads finish at the same time and now the bit string finder would need to find n new blocks
@@ -194,9 +194,13 @@ private:
             }
 
             /* @todo Kinda hacky. However, this is important in order to rethrow and notice exceptions! */
-            for ( auto& future : futures ) {
-                if ( future.wait_for( std::chrono::seconds( 0 ) ) == std::future_status::ready ) {
-                    future.get();
+            for ( auto future = futures.begin(); future != futures.end(); ) {
+                if ( future->valid() &&
+                     ( future->wait_for( std::chrono::seconds( 0 ) ) == std::future_status::ready ) ) {
+                    future->get();
+                    future = futures.erase( future );
+                } else {
+                    ++future;
                 }
             }
 

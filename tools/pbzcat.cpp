@@ -3,6 +3,7 @@
 #include <iostream>
 #include <map>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -43,7 +44,7 @@ int main( int argc, char** argv )
             nBytesWrittenTotal += nBytesRead;
         } while ( !reader.eof() );
     } else {
-        reader.read( STDOUT_FILENO );
+        nBytesWrittenTotal = reader.read( STDOUT_FILENO );
     }
     const auto offsets = reader.blockOffsets();
     //reader.seek( 900000 );
@@ -63,7 +64,10 @@ int main( int argc, char** argv )
     std::cerr << "Found " << offsets.size() << " blocks\n";
 
     if ( nBytesWrittenTotal != reader.size() ) {
-        throw std::logic_error( "Wrote less bytes than decoded stream is large!" );
+        std::stringstream msg;
+        msg << "Wrote less bytes (" << nBytesWrittenTotal << " B) than decoded stream is large("
+            << reader.size() << " B)!";
+        throw std::logic_error( msg.str() );
     }
 
     return 0;

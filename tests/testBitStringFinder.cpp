@@ -13,8 +13,9 @@ int gnTestErrors = 0;
 }
 
 
+template<class TemplatedBitStringFinder>
 bool
-testBitStringFinder( BitStringFinder&&          bitStringFinder,
+testBitStringFinder( TemplatedBitStringFinder&& bitStringFinder,
                      const std::vector<size_t>& stringPositions )
 {
     /* Gather all strings (time out at 1k strings because tests are written manually
@@ -39,9 +40,9 @@ testBitStringFinder( BitStringFinder&&          bitStringFinder,
 }
 
 
+template<uint8_t bitStringSize>
 void
 testBitStringFinder( uint64_t                          bitStringToFind,
-                     uint8_t                           bitStringSize,
                      const std::vector<unsigned char>& buffer,
                      const std::vector<size_t>&        stringPositions )
 {
@@ -49,7 +50,7 @@ testBitStringFinder( uint64_t                          bitStringToFind,
 
     {
         /* test the version working on an input buffer */
-        BitStringFinder bitStringFinder( rawBuffer, buffer.size(), bitStringToFind, bitStringSize );
+        BitStringFinder<bitStringSize> bitStringFinder( rawBuffer, buffer.size(), bitStringToFind );
         if ( !testBitStringFinder( std::move( bitStringFinder ), stringPositions ) ) {
             std::cerr << "Version working on input buffer failed!\n";
         }
@@ -69,7 +70,7 @@ testBitStringFinder( uint64_t                          bitStringToFind,
          * recognizing bit strings accross file buffer borders works correctly.
          */
         std::fflush( file );
-        BitStringFinder bitStringFinder( fileno( file ), bitStringToFind, bitStringSize, sizeof( uint64_t ) );
+        BitStringFinder<bitStringSize> bitStringFinder( fileno( file ), bitStringToFind, sizeof( uint64_t ) );
         if ( !testBitStringFinder( std::move( bitStringFinder ), stringPositions ) ) {
             std::cerr << "Version working on input file failed!\n";
         }
@@ -81,37 +82,39 @@ testBitStringFinder( uint64_t                          bitStringToFind,
 int
 main( void )
 {
-    testBitStringFinder( 0b0, 0, {}, {} );
-    testBitStringFinder( 0b0, 0, { 0x00 }, {} );
-    testBitStringFinder( 0b0, 1, { 0b0000'1111 }, { 0, 1, 2, 3 } );
-    testBitStringFinder( 0b0, 1, { 0b1010'1010 }, { 1, 3, 5, 7 } );
-    testBitStringFinder( 0b0, 1, { 0b1111'1111 }, {} );
-    testBitStringFinder( 0b0, 1, { 0b0111'1111, 0b1111'1110 }, { 0, 15 } );
-    testBitStringFinder( 0b0, 2, { 0b0000'1111 }, { 0, 1, 2 } );
-    testBitStringFinder( 0b0, 3, { 0b0000'1111 }, { 0, 1 } );
-    testBitStringFinder( 0b0, 4, { 0b0000'1111 }, { 0 } );
-    testBitStringFinder( 0b0, 5, { 0b0000'1111 }, {} );
+    /* 0-size bit strings to find arguably makes no sense to test for. */
+    //testBitStringFinder<0>( 0b0, {}, {} );
+    //testBitStringFinder<0>( 0b0, { 0x00 }, {} );
+    //testBitStringFinder<0>( 0b1111'1111, {}, {} );
+    //testBitStringFinder<0>( 0b1111'1111, { 0x00 }, {} );
 
-    testBitStringFinder( 0b1111'1111, 0, {}, {} );
-    testBitStringFinder( 0b1111'1111, 0, { 0x00 }, {} );
-    testBitStringFinder( 0b1111'1111, 1, { 0b0000'1111 }, { 4, 5, 6, 7 } );
-    testBitStringFinder( 0b1111'1111, 1, { 0b1010'1010 }, { 0, 2, 4, 6 } );
-    testBitStringFinder( 0b1111'1111, 8, { 0b1111'1111 }, { 0 } );
-    testBitStringFinder( 0b1111'1111, 1, { 0b1000'0000, 0b0000'0001 }, { 0, 15 } );
-    testBitStringFinder( 0b1111'1111, 2, { 0b0000'1111 }, { 4, 5, 6 } );
-    testBitStringFinder( 0b1111'1111, 3, { 0b0000'1111 }, { 4, 5 } );
-    testBitStringFinder( 0b1111'1111, 4, { 0b0000'1111 }, { 4 } );
-    testBitStringFinder( 0b1111'1111, 5, { 0b0000'1111 }, {} );
+    testBitStringFinder<1>( 0b0, { 0b0000'1111 }, { 0, 1, 2, 3 } );
+    testBitStringFinder<1>( 0b0, { 0b1010'1010 }, { 1, 3, 5, 7 } );
+    testBitStringFinder<1>( 0b0, { 0b1111'1111 }, {} );
+    testBitStringFinder<1>( 0b0, { 0b0111'1111, 0b1111'1110 }, { 0, 15 } );
+    testBitStringFinder<2>( 0b0, { 0b0000'1111 }, { 0, 1, 2 } );
+    testBitStringFinder<3>( 0b0, { 0b0000'1111 }, { 0, 1 } );
+    testBitStringFinder<4>( 0b0, { 0b0000'1111 }, { 0 } );
+    testBitStringFinder<5>( 0b0, { 0b0000'1111 }, {} );
 
-    testBitStringFinder( 0b10'1010'1010, 10, { 0b0101'0101, 0b0101'0101 }, { 1, 3, 5 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0x11, 0x41, 0x59, 0x26, 0x53, 0x59 }, {} );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x58 }, {} );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 }, { 0 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 0 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 8 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 16 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 24 } );
-    testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 32 } );
+    testBitStringFinder<1>( 0b1111'1111, { 0b0000'1111 }, { 4, 5, 6, 7 } );
+    testBitStringFinder<1>( 0b1111'1111, { 0b1010'1010 }, { 0, 2, 4, 6 } );
+    testBitStringFinder<8>( 0b1111'1111, { 0b1111'1111 }, { 0 } );
+    testBitStringFinder<1>( 0b1111'1111, { 0b1000'0000, 0b0000'0001 }, { 0, 15 } );
+    testBitStringFinder<2>( 0b1111'1111, { 0b0000'1111 }, { 4, 5, 6 } );
+    testBitStringFinder<3>( 0b1111'1111, { 0b0000'1111 }, { 4, 5 } );
+    testBitStringFinder<4>( 0b1111'1111, { 0b0000'1111 }, { 4 } );
+    testBitStringFinder<5>( 0b1111'1111, { 0b0000'1111 }, {} );
+
+    testBitStringFinder<10>( 0b10'1010'1010, { 0b0101'0101, 0b0101'0101 }, { 1, 3, 5 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0x11, 0x41, 0x59, 0x26, 0x53, 0x59 }, {} );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x58 }, {} );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 }, { 0 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 0 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 8 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 16 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 24 } );
+    testBitStringFinder<48>( 0x314159265359ULL, { 0, 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 32 } );
 
     /* Tests with second match a lot further away and definitely over the loading chunk size. */
     {
@@ -127,7 +130,7 @@ main( void )
                 tmpBuf.push_back( c );
             }
 
-            testBitStringFinder( 0x314159265359ULL, 48, tmpBuf, tmpResults );
+            testBitStringFinder<48>( 0x314159265359ULL, tmpBuf, tmpResults );
         }
     }
 
