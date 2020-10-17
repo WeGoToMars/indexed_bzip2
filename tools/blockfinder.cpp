@@ -10,7 +10,17 @@
 #include <type_traits>
 #include <utility>
 
+#include <BitStringFinder.hpp>
+#include <common.hpp>
+
 //#define BENCHMARK
+
+namespace
+{
+constexpr uint64_t bitStringToFind = 0x314159265359;
+constexpr uint8_t bitStringToFindSize = 48;
+}
+
 
 #if 0
 /**
@@ -113,37 +123,6 @@ createdShiftedBitStringLUT( uint64_t bitString,
     }
 
     return shiftedBitStrings;
-}
-
-
-template<typename I1,
-         typename I2,
-         typename Enable = typename std::enable_if<
-            std::is_integral<I1>::value &&
-            std::is_integral<I2>::value
-         >::type>
-I1
-ceilDiv( I1 dividend,
-         I2 divisor )
-{
-    return ( dividend + divisor - 1 ) / divisor;
-}
-
-
-inline std::chrono::time_point<std::chrono::high_resolution_clock>
-now()
-{
-    return std::chrono::high_resolution_clock::now();
-}
-
-
-/** @return duration in seconds */
-template<typename T0, typename T1>
-double
-duration( const T0& t0,
-          const T1& t1 )
-{
-    return std::chrono::duration<double>( t1 - t0 ).count();
 }
 
 
@@ -283,13 +262,10 @@ findBitString( const char* buffer,
 std::vector<size_t>
 findBitStrings( const std::string& filename )
 {
-    const uint64_t bitString = 0x314159265359;
-    const uint8_t bitStringSize = 48;
-
     std::vector<size_t> blockOffsets;
 
     FILE* file = fopen( filename.c_str(), "rb" );
-    const auto movingBytesToKeep = ceilDiv( bitStringSize, CHAR_BIT ); // 6
+    const auto movingBytesToKeep = ceilDiv( bitStringToFindSize, CHAR_BIT ); // 6
     std::vector<char> buffer( 2 * 1024 * 1024 + movingBytesToKeep ); // for performance testing
     //std::vector<char> buffer( 53 ); // for bug testing with bit strings accross buffer boundaries
     size_t nTotalBytesRead = 0;
@@ -309,9 +285,9 @@ findBitStrings( const std::string& filename )
 
         for ( size_t bitpos = 0; bitpos < nBytesRead * CHAR_BIT; ) {
             const auto byteOffset = bitpos / CHAR_BIT; // round down because we can't give bit precision
-            const auto relpos = findBitString<bitStringSize>( buffer.data() + byteOffset,
-                                                              buffer.size() - byteOffset,
-                                                              bitString );
+            const auto relpos = findBitString<bitStringToFindSize>( buffer.data() + byteOffset,
+                                                                    buffer.size() - byteOffset,
+                                                                    bitStringToFind );
             if ( relpos == std::numeric_limits<size_t>::max() ) {
                 break;
             }
@@ -322,7 +298,7 @@ findBitStrings( const std::string& filename )
             if ( blockOffsets.empty() || ( blockOffsets.back() != foundOffset ) ) {
                 blockOffsets.push_back( foundOffset );
             }
-            bitpos += bitStringSize;
+            bitpos += bitStringToFindSize;
         }
         nTotalBytesRead += nBytesRead;
     }
@@ -334,22 +310,19 @@ findBitStrings( const std::string& filename )
 std::vector<size_t>
 findBitStrings2( const std::string& filename )
 {
-    const uint64_t bitString = 0x314159265359;
-    const uint8_t bitStringSize = 48;
-
     std::vector<size_t> blockOffsets;
 
     BitReader bitReader( filename );
 
-    uint64_t bytes = bitReader.read( bitStringSize - 1 );
+    uint64_t bytes = bitReader.read( bitStringToFindSize - 1 );
     while ( true ) {
         bytes = ( ( bytes << 1 ) | bitReader.read( 1 ) ) & 0xFFFFFFFFFFFF;
         if ( bitReader.eof() ) {
             break;
         }
 
-        if ( bytes == bitString ) {
-            blockOffsets.push_back( bitReader.tell() - bitStringSize );
+        if ( bytes == bitStringToFind ) {
+            blockOffsets.push_back( bitReader.tell() - bitStringToFindSize );
         }
     }
 
@@ -360,9 +333,6 @@ findBitStrings2( const std::string& filename )
 std::vector<size_t>
 findBitStrings3( const std::string& filename )
 {
-    const uint64_t bitString = 0x314159265359;
-    const uint8_t bitStringSize = 48;
-
     std::vector<size_t> blockOffsets;
 
     FILE* file = fopen( filename.c_str(), "rb" );
@@ -381,13 +351,13 @@ findBitStrings3( const std::string& filename )
                 const auto bit = ( byte >> ( CHAR_BIT - 1 - j ) ) & 1U;
                 window <<= 1;
                 window |= bit;
-                if ( ( nTotalBytesRead + i ) * CHAR_BIT + j < bitStringSize ) {
+                if ( ( nTotalBytesRead + i ) * CHAR_BIT + j < bitStringToFindSize ) {
                     continue;
                 }
 
-                if ( ( window & 0xFFFF'FFFF'FFFFULL ) == bitString ) {
+                if ( ( window & 0xFFFF'FFFF'FFFFULL ) == bitStringToFind ) {
                     /* Dunno why the + 1 is necessary but it works (tm) */
-                    blockOffsets.push_back( ( nTotalBytesRead + i ) * CHAR_BIT + j + 1 - bitStringSize );
+                    blockOffsets.push_back( ( nTotalBytesRead + i ) * CHAR_BIT + j + 1 - bitStringToFindSize );
                 }
             }
         }
@@ -399,18 +369,36 @@ findBitStrings3( const std::string& filename )
 }
 
 
+std::vector<size_t>
+findBitStrings4( const std::string& filename )
+{
+    std::vector<size_t> matches;
+
+    BitStringFinder bitStringFinder( filename, bitStringToFind, bitStringToFindSize );
+    while( true )  {
+        matches.push_back( bitStringFinder.find() );
+        if ( matches.back() == std::numeric_limits<size_t>::max() ) {
+            matches.pop_back();
+            break;
+        }
+    }
+    return matches;
+}
+
+
 int main( int argc, char** argv )
 {
     if ( argc < 2 ) {
         std::cerr << "A bzip2 file name to decompress must be specified!\n";
         return 1;
     }
-    const std::string filename ( argv[1] );
+    const std::string filename( argv[1] );
 
     /* comments contain tests on firefox-66.0.5.tar.bz2 */
-    const auto blockOffsets = findBitStrings( filename ); // ~520ms // ~1.7s on /dev/shm with 911MiB large.bz2
+    //const auto blockOffsets = findBitStrings( filename ); // ~520ms // ~1.7s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings2( filename ); // ~9.5s // ~100s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings3( filename ); // ~520ms // 6.4s on /dev/shm with 911MiB large.bz2
+    const auto blockOffsets = findBitStrings4( filename );
     /* lookup table and manual minimal bit reader were virtually equally fast
      * probably because the encrypted SSD was the limiting factor -> repeat with /dev/shm
      * => searching is roughly 4x slower, so multithreading on 4 threads should make it equally fast,

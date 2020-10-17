@@ -10,27 +10,11 @@
 namespace {
 int gnTests = 0;
 int gnTestErrors = 0;
-
-
-#if 0
-template<typename T>
-std::ostream&
-operator<<( std::ostream&  out,
-            std::vector<T> vector )
-{
-    out << "{ ";
-    for ( const auto value : vector ) {
-        out << value << ", ";
-    }
-    out << " }";
-    return out;
-}
-#endif
 }
 
 
-void
-testBitStringFinder( BitStringFinder&& bitStringFinder,
+bool
+testBitStringFinder( BitStringFinder&&          bitStringFinder,
                      const std::vector<size_t>& stringPositions )
 {
     /* Gather all strings (time out at 1k strings because tests are written manually
@@ -48,7 +32,10 @@ testBitStringFinder( BitStringFinder&& bitStringFinder,
     if ( matches != stringPositions ) {
         ++gnTestErrors;
         std::cerr << "[FAIL] Matches: " << matches << " != " << stringPositions << "\n";
+        return false;
     }
+
+    return true;
 }
 
 
@@ -63,13 +50,15 @@ testBitStringFinder( uint64_t                          bitStringToFind,
     {
         /* test the version working on an input buffer */
         BitStringFinder bitStringFinder( rawBuffer, buffer.size(), bitStringToFind, bitStringSize );
-        testBitStringFinder( std::move( bitStringFinder ), stringPositions );
+        if ( !testBitStringFinder( std::move( bitStringFinder ), stringPositions ) ) {
+            std::cerr << "Version working on input buffer failed!\n";
+        }
     }
+
     {
         /* test the version working on an input file by writing the buffer to a temporary file */
         const auto file = std::tmpfile();
         const auto nWritten = std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file );
-        std::cerr << "wrote " << buffer.size() << " bytes\n";
         /**
          * Flush the file so that BitReader sees the written data when accessing the file through the file descriptor.
          * Don't close file because:
@@ -81,7 +70,9 @@ testBitStringFinder( uint64_t                          bitStringToFind,
          */
         std::fflush( file );
         BitStringFinder bitStringFinder( fileno( file ), bitStringToFind, bitStringSize, sizeof( uint64_t ) );
-        testBitStringFinder( std::move( bitStringFinder ), stringPositions );
+        if ( !testBitStringFinder( std::move( bitStringFinder ), stringPositions ) ) {
+            std::cerr << "Version working on input file failed!\n";
+        }
         std::fclose( file );
     }
 }
@@ -121,6 +112,24 @@ main( void )
     testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 16 } );
     testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 24 } );
     testBitStringFinder( 0x314159265359ULL, 48, { 0, 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 }, { 32 } );
+
+    /* Tests with second match a lot further away and definitely over the loading chunk size. */
+    {
+        const std::vector<unsigned char> buffer = { 0, 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 };
+        const std::vector<size_t> expectedResults = { 32 };
+        for ( const auto offset : { 1, 100, 123, 1024, 2000 } ) {
+            auto tmpResults = expectedResults;
+            tmpResults.push_back( ( buffer.size() + offset ) * CHAR_BIT );
+
+            auto tmpBuf = buffer;
+            tmpBuf.resize( tmpBuf.size() + offset, 0 );
+            for ( auto c : { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 } ) {
+                tmpBuf.push_back( c );
+            }
+
+            testBitStringFinder( 0x314159265359ULL, 48, tmpBuf, tmpResults );
+        }
+    }
 
     std::cout << "Tests successful: " << ( gnTests - gnTestErrors ) << " / " << gnTests << "\n";
 

@@ -134,9 +134,9 @@ private:
     {
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
-            ? BitStringFinder<1>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
-                                  m_bitReader.buffer().size(), { bzip2::MAGIC_BITS_BLOCK }, bzip2::MAGIC_BITS_SIZE )
-            : BitStringFinder<1>( m_bitReader.fileno(), { bzip2::MAGIC_BITS_BLOCK }, bzip2::MAGIC_BITS_SIZE );
+            ? BitStringFinder( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
+                               m_bitReader.buffer().size(), bzip2::MAGIC_BITS_BLOCK, bzip2::MAGIC_BITS_SIZE )
+            : BitStringFinder( m_bitReader.fileno(), bzip2::MAGIC_BITS_BLOCK, bzip2::MAGIC_BITS_SIZE );
 
         /* Only hardware_concurrency slows down decoding! I guess because in the worst case all decoding
          * threads finish at the same time and now the bit string finder would need to find n new blocks
@@ -191,6 +191,13 @@ private:
             if ( blockOffset != std::numeric_limits<size_t>::max() ) {
                 auto result = m_threadPool.submitTask( [this, blockOffset] () { decodeBlock( blockOffset ); } );
                 futures.emplace_back( std::move( result ) );
+            }
+
+            /* @todo Kinda hacky. However, this is important in order to rethrow and notice exceptions! */
+            for ( auto& future : futures ) {
+                if ( future.wait_for( std::chrono::seconds( 0 ) ) == std::future_status::ready ) {
+                    future.get();
+                }
             }
 
             /** @todo only decode up to hardware_concurrency blocks, then wait for old ones to be cleared! */
