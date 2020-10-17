@@ -17,6 +17,44 @@
 #include "ThreadSafeQueue.hpp"
 
 
+#include <sstream>
+
+
+/**
+ * Use like this: std::cerr << ( ThreadSafeOutput() << "Hello" << i << "there" ).str();
+ */
+class ThreadSafeOutput
+{
+public:
+    ThreadSafeOutput()
+    {
+        m_out << "[" << std::this_thread::get_id() << "]";
+    }
+
+    template<typename T>
+    ThreadSafeOutput&
+    operator<<( const T& value )
+    {
+        m_out << " " << value;
+        return *this;
+    }
+
+    operator std::string() const
+    {
+        return m_out.str() + "\n";
+    }
+
+    std::string
+    str() const
+    {
+        return m_out.str() + "\n";
+    }
+
+private:
+    std::stringstream m_out;
+};
+
+
 /**
  * The idea is to use where possible the original BZ2Reader functions but extend them for parallelism.
  * Each worker thread has its own BitReader object in order to be able to access the input independently.
@@ -132,6 +170,7 @@ private:
     void
     blockFinderMain()
     {
+        std::cerr << "[Block Finder] Boot\n";
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
             ? BitStringFinder<bzip2::MAGIC_BITS_SIZE>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
@@ -157,23 +196,28 @@ private:
             }
 
             if ( m_blocks.unprocessedBlockCount() < maxBlocksToQueue ) {
+                //std::cerr << "[Block Finder] Found offset " << bitOffset << "\n";
                 m_blocks.insertBlock( bitOffset );
                 bitOffset = std::numeric_limits<size_t>::max();
                 continue;
             }
 
+            std::cerr << "[Block Finder] Found " << m_blocks.size() << " blocks. Waiting for decoders.\n";
             m_blocks.waitUntilChanged( 0.01 );
         }
 
+        std::cerr << "[Block Finder] Found " << m_blocks.size() << " blocks\n";
+        std::cerr << "[Block Finder] Finalizing...\n";
         m_blocks.finalize();
         m_blockToDataOffsets = m_blocks.blockOffsets();
         m_blockToDataOffsetsComplete = true;
-        std::cerr << "EXIT Block Finder\n";
+        std::cerr << "[Block Finder] Shutdown\n";
     }
 
     void
     workDispatcherMain()
     {
+        std::cerr << "[Work Dispatcher] Boot\n";
         std::list<decltype( m_threadPool.submitTask( std::function<void()>() ) )> futures;
 
         while ( !m_cancelThreads ) {
@@ -210,10 +254,11 @@ private:
             }
         }
 
+        std::cerr << "[Work Dispatcher] Wait on submitted tasks\n";
         for ( auto& future : futures ) {
             future.get();
         }
-        std::cerr << "EXIT Work Dispatcher\n";
+        std::cerr << "[Work Dispatcher] Shutdown\n";
     }
 
     void
@@ -224,8 +269,7 @@ private:
         bzip2::Block block( bitReader );
 
         if ( block.eos() ) {
-            std::cerr << "[" << std::this_thread::get_id() << "] ";
-            std::cerr << "EOS block at " << blockOffset << "\n";
+            std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
             const auto encodedBitsCount = bitReader.tell() - blockOffset;
             m_blocks.setBlockData( blockOffset, encodedBitsCount, {}, 0, block.bwdata.headerCRC, block.eos() );
             return;
