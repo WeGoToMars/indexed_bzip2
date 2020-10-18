@@ -23,10 +23,10 @@ namespace bzip2
 {
 static constexpr int CRC32_LOOKUP_TABLE_SIZE = 256;
 
-inline std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE>
+constexpr std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE>
 createCRC32LookupTable( bool littleEndian = false )
 {
-    std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE> table;
+    std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE> table{};
     for ( size_t i = 0; i < table.size(); ++i ) {
         uint32_t c = littleEndian ? i : i << 24;
         for ( int j = 0; j < 8; ++j ) {
@@ -42,7 +42,7 @@ createCRC32LookupTable( bool littleEndian = false )
 }
 
 /* a small lookup table: raw data -> CRC32 value to speed up CRC calculation */
-static const std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE> CRC32_TABLE = createCRC32LookupTable();
+static constexpr std::array<uint32_t, CRC32_LOOKUP_TABLE_SIZE> CRC32_TABLE = createCRC32LookupTable();
 
 
 /* Constants for huffman coding */
@@ -474,20 +474,24 @@ Block::readBlockData()
             jj = ( jj << 1 ) | getBits( 1 );
         }
 
+        #ifndef NDEBUG
         if ( ii > hufGroup->maxLen ) {
             std::stringstream msg;
             msg << "[BZip2 block data] " << ii << " bigger than max length " << hufGroup->maxLen;
             throw std::domain_error( msg.str() );
         }
+        #endif
 
         // Huffman decode jj into nextSym (with bounds checking)
         jj -= base[ii];
 
+        #ifndef NDEBUG
         if ( (unsigned)jj >= MAX_SYMBOLS ) {
             std::stringstream msg;
             msg << "[BZip2 block data] " << jj << " larger than max symbols " << MAX_SYMBOLS;
             throw std::domain_error( msg.str() );
         }
+        #endif
 
         const auto nextSym = hufGroup->permute[jj];
 
@@ -542,11 +546,13 @@ Block::readBlockData()
          * result can't be -1 or 0, because 0 and 1 are RUNA and RUNB.
          * Another instance of the first symbol in the mtf array, position 0,
          * would have been handled as part of a run.) */
+        #ifndef NDEBUG
         if ( dbufCount >= bwdata.dbuf.size() ) {
             std::stringstream msg;
             msg << "[BZip2 block data] dbufCount " << dbufCount << " > " << bwdata.dbuf.size() << " dbufSize";
             throw std::domain_error( msg.str() );
         }
+        #endif
         ii = nextSym - 1;
         auto uc = mtfSymbol[ii];
         // On my laptop, unrolling this memmove() into a loop shaves 3.5% off
@@ -564,11 +570,13 @@ Block::readBlockData()
 
     // Now we know what dbufCount is, do a better sanity check on origPtr.
     bwdata.writeCount = dbufCount;
+    #ifndef NDEBUG
     if ( bwdata.origPtr >= dbufCount ) {
         std::stringstream msg;
         msg << "[BZip2 block data] origPtr error " << bwdata.origPtr;
         throw std::domain_error( msg.str() );
     }
+    #endif
 
     bwdata.prepare();
 }
