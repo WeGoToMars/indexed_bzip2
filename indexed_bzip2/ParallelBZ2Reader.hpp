@@ -120,11 +120,11 @@ public:
             return 0;
         }
 
-        /* try to flush remnants in output buffer from interrupted last call */
-        size_t nBytesDecoded = flushOutputBuffer( outputFileDescriptor, outputBuffer, nBytesToRead );
-
+        size_t nBytesDecoded = 0;
         while ( ( nBytesDecoded < nBytesToRead ) && !eof() ) {
             const auto wasComplete = m_blocks.completed();
+            m_blocks.clearBlockDataBefore( m_currentPosition );
+            //std::cerr << ( ThreadSafeOutput() << "blocks with data:" << m_blocks.blocksWithDataCount() ).str();
             const auto [buffer, size] = m_blocks.data( m_currentPosition );
 
             if ( buffer == nullptr ) {
@@ -139,12 +139,10 @@ public:
             }
 
             const auto nBytesToDecode = std::min( size, nBytesToRead - nBytesDecoded );
-            m_decodedBuffer = std::vector<char>( buffer, buffer + nBytesToDecode );
-            m_decodedBufferPos = nBytesToDecode;
-
-            nBytesDecoded += flushOutputBuffer( outputFileDescriptor,
-                                                outputBuffer == nullptr ? nullptr : outputBuffer + nBytesDecoded,
-                                                nBytesToRead - nBytesDecoded );
+            nBytesDecoded += writeResult( outputFileDescriptor,
+                                          outputBuffer == nullptr ? nullptr : outputBuffer + nBytesDecoded,
+                                          reinterpret_cast<const char*>( buffer ),
+                                          nBytesToDecode );
             m_currentPosition += nBytesToDecode;
         }
 
@@ -170,7 +168,7 @@ private:
     void
     blockFinderMain()
     {
-        std::cerr << "[Block Finder] Boot\n";
+        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Boot" ).str();
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
             ? BitStringFinder<bzip2::MAGIC_BITS_SIZE>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
@@ -202,22 +200,23 @@ private:
                 continue;
             }
 
-            std::cerr << "[Block Finder] Found " << m_blocks.size() << " blocks. Waiting for decoders.\n";
+            /* Waiting for decoders is the desired thing. We don't want the blockfinder to slow down the decoders. */
+            //std::cerr << "[Block Finder] Found " << m_blocks.size() << " blocks. Waiting for decoders.\n";
             m_blocks.waitUntilChanged( 0.01 );
         }
 
-        std::cerr << "[Block Finder] Found " << m_blocks.size() << " blocks\n";
-        std::cerr << "[Block Finder] Finalizing...\n";
+        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found " << m_blocks.size() << " blocks" ).str();
+        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Finalizing..." ).str();
         m_blocks.finalize();
         m_blockToDataOffsets = m_blocks.blockOffsets();
         m_blockToDataOffsetsComplete = true;
-        std::cerr << "[Block Finder] Shutdown\n";
+        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Shutdown" ).str();
     }
 
     void
     workDispatcherMain()
     {
-        std::cerr << "[Work Dispatcher] Boot\n";
+        std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Boot" ).str();
         std::list<decltype( m_threadPool.submitTask( std::function<void()>() ) )> futures;
 
         while ( !m_cancelThreads ) {
@@ -254,11 +253,11 @@ private:
             }
         }
 
-        std::cerr << "[Work Dispatcher] Wait on submitted tasks\n";
+        std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Wait on submitted tasks" ).str();
         for ( auto& future : futures ) {
             future.get();
         }
-        std::cerr << "[Work Dispatcher] Shutdown\n";
+        std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Shutdown" ).str();
     }
 
     void
@@ -319,6 +318,26 @@ private:
          * so only call after possibly inserting the next block */
         m_blocks.setBlockData( blockOffset, encodedBitsCount, std::move( decodedData ),
                                block.bwdata.dataCRC, block.bwdata.headerCRC, block.eos() );
+    }
+
+    size_t
+    writeResult( int         const outputFileDescriptor,
+                 char*       const outputBuffer,
+                 char const* const dataToWrite,
+                 size_t      const dataToWriteSize )
+    {
+        size_t nBytesFlushed = dataToWriteSize; // default then there is neither output buffer nor file device given
+
+        if ( outputFileDescriptor >= 0 ) {
+            const auto nBytesWritten = write( outputFileDescriptor, dataToWrite, dataToWriteSize );
+            nBytesFlushed = std::max<decltype( nBytesWritten )>( 0, nBytesWritten );
+        }
+
+        if ( outputBuffer != nullptr ) {
+            std::memcpy( outputBuffer, dataToWrite, nBytesFlushed );
+        }
+
+        return nBytesFlushed;
     }
 
 private:

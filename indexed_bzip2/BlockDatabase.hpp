@@ -84,9 +84,6 @@ public:
 public:
     BlockDatabase() = default;
 
-    using BaseType::size;
-    using BaseType::empty;
-
     [[nodiscard]] bool
     completed() const
     {
@@ -190,6 +187,12 @@ public:
         return m_blocksBeingProcessed.size();
     }
 
+    [[nodiscard]] size_t
+    blocksWithDataCount() const
+    {
+        return m_blocksWithData.size();
+    }
+
     size_t
     takeBlockForProcessing()
     {
@@ -244,6 +247,9 @@ public:
         updateDecodedOffsets( offsetBitsEncoded );
 
         m_blocksBeingProcessed.erase( offsetBitsEncoded );
+        if ( !block.decodedData.empty() ) {
+            m_blocksWithData.insert( offsetBitsEncoded );
+        }
 
         /** @todo check stream CRC */
 
@@ -275,15 +281,18 @@ public:
         }
 
         block.decodedData = std::move( decodedData );
+        if ( !block.decodedData.empty() ) {
+            m_blocksWithData.insert( offsetBitsEncoded );
+        }
 
         m_changed.notify_all();
     }
 
     /**
-     * If the block turns out to not be a bzip2 block, which can happen when reyling on the magic bytes to find them.
+     * If the block turns out to not be a bzip2 block, which can happen when relying on the magic bytes to find them.
      */
     void
-    removeBlock( size_t offsetBitsEncoded )
+    erase( size_t offsetBitsEncoded )
     {
         std::lock_guard guard( m_mutex );
 
@@ -291,7 +300,11 @@ public:
             throw std::invalid_argument( "Block database already marked as complete. You may not remove blocks!" );
         }
 
-        erase( offsetBitsEncoded );
+        /* In order to get the offsetBitsEncoded, the block should already have been removed
+         * from m_unprocessedBlocks by the call to takeBlockForProcessing. */
+        m_blocksBeingProcessed.erase( offsetBitsEncoded );
+        m_blocksWithData.erase( offsetBitsEncoded ); // This is only for safety. Theoretically it should not happen.
+        BaseType::erase( offsetBitsEncoded );
 
         updateDecodedOffsets( offsetBitsEncoded );
         m_changed.notify_all();
@@ -352,6 +365,28 @@ public:
         }
     }
 
+
+    /**
+     * Clears internal decoded and encoded buffers if non-empty for all blocks before (not including)
+     * the given offset in the decoded data. Should be called regularly to avoid unlimited memory growth.
+     */
+    void
+    clearBlockDataBefore( size_t offsetBytesDecoded )
+    {
+        std::lock_guard guard( m_mutex );
+        for ( auto offsetBitsEncoded = m_blocksWithData.begin(); offsetBitsEncoded != m_blocksWithData.end(); ) {
+            auto& block = at( *offsetBitsEncoded );
+            if ( ( block.offsetBytesDecoded != std::numeric_limits<size_t>::max() ) &&
+                 ( block.offsetBytesDecoded + block.decodedBytesCount < offsetBytesDecoded ) ) {
+                block.encodedData = std::vector<uint8_t>(); // clear does not free the allocated memory!
+                block.decodedData = std::vector<uint8_t>(); // clear does not free the allocated memory!
+                offsetBitsEncoded = m_blocksWithData.erase( offsetBitsEncoded );
+            } else {
+                ++offsetBitsEncoded;
+            }
+        }
+        m_changed.notify_all();
+    }
 
     void
     clearBlockData( size_t offsetBitsEncoded )
@@ -480,8 +515,13 @@ private:
 
     /**
      * These blocks were never processed once, meaning they still have unitialized decoded offsets or might
-     * even be invalid.
+     * even be invalid. Also they might have buffers of encoded data which can be large!
      */
     std::queue<size_t> m_unprocessedBlocks;
+
+    /** These blocks were taken by someone and are currently "locked". @todo Actually use a block-level lock. */
     std::set<size_t> m_blocksBeingProcessed;
+
+    /** These blocks have decoded data and should be cleared when not needed any longer. */
+    std::set<size_t> m_blocksWithData;
 };

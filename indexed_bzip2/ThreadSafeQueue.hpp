@@ -65,13 +65,22 @@ public:
     [[nodiscard]] bool
     empty() const
     {
+        std::lock_guard<std::mutex> lock( m_mutex );
         return m_queue.empty();
     }
 
     [[nodiscard]] size_t
     size() const
     {
+        std::lock_guard<std::mutex> lock( m_mutex );
         return m_queue.size();
+    }
+
+    void
+    clear()
+    {
+        std::lock_guard<std::mutex> lock( m_mutex );
+        return m_queue.clear();
     }
 
 private:
