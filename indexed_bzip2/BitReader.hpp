@@ -208,7 +208,7 @@ public:
      * are to be returned on read but the most significant.
      * E.g. return 3 bits of 1011 1001 should return 101 not 001
      */
-    uint64_t m_inbufBits = 0;
+    uint32_t m_inbufBits = 0;
     uint8_t m_inbufBitCount = 0; // size of bitbuffer in bits
 
     size_t m_readBitsCount = 0;
@@ -216,15 +216,15 @@ public:
 
 
 inline uint32_t
-BitReader::read( const uint8_t bitsWanted )
+BitReader::read( const uint8_t bits_wanted )
 {
-    assert( bitsWanted <= sizeof( bits ) * CHAR_BIT );
-    m_readBitsCount += bitsWanted;
     uint32_t bits = 0;
+    assert( bits_wanted <= sizeof( bits ) * 8 );
+    m_readBitsCount += bits_wanted;
 
     // If we need to get more data from the byte buffer, do so.  (Loop getting
     // one byte at a time to enforce endianness and avoid unaligned access.)
-    auto bitsNeeded = bitsWanted;
+    auto bitsNeeded = bits_wanted;
     while ( m_inbufBitCount < bitsNeeded ) {
         // If we need to read more data from file into byte buffer, do so
         if ( m_inbufPos == m_inbuf.size() ) {
@@ -249,8 +249,8 @@ BitReader::read( const uint8_t bitsWanted )
         }
 
         // Avoid 32-bit overflow (dump bit buffer to top of output)
-        if ( m_inbufBitCount >= ( sizeof( m_inbufBits ) - 1 ) * CHAR_BIT ) {
-            bits = m_inbufBits & ( ( decltype( m_inbufBits )( 1 ) << m_inbufBitCount ) - 1U );
+        if ( m_inbufBitCount >= 24 ) {
+            bits = m_inbufBits & ( ( 1 << m_inbufBitCount ) - 1 );
             bitsNeeded -= m_inbufBitCount;
             bits <<= bitsNeeded;
             m_inbufBitCount = 0;
@@ -263,8 +263,8 @@ BitReader::read( const uint8_t bitsWanted )
 
     // Calculate result
     m_inbufBitCount -= bitsNeeded;
-    bits |= ( m_inbufBits >> m_inbufBitCount ) & ( ( decltype( m_inbufBits )( 1 ) << bitsNeeded ) - 1U );
-    assert( bits == ( bits & ( ~0ULL >> ( sizeof( m_inbufBits ) * CHAR_BIT - bitsWanted ) ) ) );
+    bits |= ( m_inbufBits >> m_inbufBitCount ) & ( ( 1 << bitsNeeded ) - 1 );
+    assert( bits == ( bits & ( ~0L >> ( 32 - bits_wanted ) ) ) );
     return bits;
 }
 
