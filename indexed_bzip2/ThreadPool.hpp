@@ -116,6 +116,13 @@ public:
         return m_threads.size();
     }
 
+    size_t
+    unprocessedTasksCount() const
+    {
+        std::lock_guard lock( m_tasksMutex );
+        return m_tasks.size();
+    }
+
 private:
     void
     workerMain()
@@ -141,7 +148,7 @@ private:
 private:
     bool m_threadPoolRunning = true;
     std::deque<PackagedTaskWrapper> m_tasks;
-    std::mutex m_tasksMutex;
+    mutable std::mutex m_tasksMutex;
     std::condition_variable m_pingWorkers;
 
     /**

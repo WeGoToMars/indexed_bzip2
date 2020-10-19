@@ -250,6 +250,8 @@ private:
             /** @todo only decode up to hardware_concurrency blocks, then wait for old ones to be cleared! */
             if ( m_blocks.unprocessedBlockCount() == 0 ) {
                 m_blocks.waitUntilChanged( 0.01 ); /* Every 100ms, check whether this thread has been canceled. */
+                std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Waiting for new blocks!"
+                               << "Unprocessed tasks in thread pool:" << m_threadPool.unprocessedTasksCount() ).str();
             }
         }
 

@@ -57,9 +57,18 @@ int main( int argc, char** argv )
     std::cerr << "Block offsets  :\n";
     for ( auto it = offsets.begin(); it != offsets.end(); ++it ) {
         bitreader.seek( it->first );
-        std::cerr
-        << it->first / 8 << " B " << it->first % 8 << " b : "  << it->second / 8 << " B " << " -> magic bytes: 0x"
-        << std::hex << bitreader.read( 32 ) << std::dec << "\n";
+        const auto magicBytes = bitreader.read( 32 );
+
+        std::stringstream msg;
+        msg << it->first / 8 << " B " << it->first % 8 << " b : "  << it->second / 8 << " B " << " -> magic bytes: 0x"
+            << std::hex << magicBytes << std::dec;
+        // std::cerr msg.str() << "\n";
+
+        if ( ( magicBytes != ( ( bzip2::MAGIC_BITS_BLOCK >> 16 ) & ~uint32_t( 0 ) ) ) &&
+             ( magicBytes != ( ( bzip2::MAGIC_BITS_EOS   >> 16 ) & ~uint32_t( 0 ) ) ) ) {
+            msg << " -> Found wrong offset in encoded data!\n";
+            throw std::logic_error( msg.str() );
+        }
     }
     std::cerr << "Found " << offsets.size() << " blocks\n";
 
