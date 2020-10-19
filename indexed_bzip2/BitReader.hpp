@@ -121,6 +121,10 @@ public:
         return ( m_file == nullptr ) && m_inbuf.empty();
     }
 
+    template<uint8_t bitsWanted>
+    uint32_t
+    read();
+
     uint32_t
     read( uint8_t );
 
@@ -213,6 +217,61 @@ public:
 
     size_t m_readBitsCount = 0;
 };
+
+
+template<uint8_t bitsWanted>
+uint32_t
+BitReader::read()
+{
+    uint32_t bits = 0;
+    static_assert( bitsWanted <= sizeof( bits ) * 8, "Desired bits don't fit in result buffer!" );
+    m_readBitsCount += bitsWanted;
+
+    // If we need to get more data from the byte buffer, do so.  (Loop getting
+    // one byte at a time to enforce endianness and avoid unaligned access.)
+    auto bitsNeeded = bitsWanted;
+    while ( m_inbufBitCount < bitsNeeded ) {
+        // If we need to read more data from file into byte buffer, do so
+        if ( m_inbufPos == m_inbuf.size() ) {
+            m_inbuf.resize( IOBUF_SIZE );
+            const auto nBytesRead = fread( m_inbuf.data(), 1, m_inbuf.size(), m_file );
+            if ( nBytesRead < m_inbuf.size() ) {
+                m_lastReadSuccessful = false;
+            }
+            if ( nBytesRead <= 0 ) {
+                // this will also happen for invalid file descriptor -1
+                std::stringstream msg;
+                msg
+                << "[BitReader] Not enough data to read!\n"
+                << "  File pointer: " << (void*)m_file << "\n"
+                << "  File position: " << ftell( m_file ) << "\n"
+                << "  Input buffer size: " << m_inbuf.size() << "\n"
+                << "\n";
+                throw std::domain_error( msg.str() );
+            }
+            m_inbuf.resize( nBytesRead );
+            m_inbufPos = 0;
+        }
+
+        // Avoid 32-bit overflow (dump bit buffer to top of output)
+        if ( m_inbufBitCount >= 24 ) {
+            bits = m_inbufBits & ( ( 1 << m_inbufBitCount ) - 1 );
+            bitsNeeded -= m_inbufBitCount;
+            bits <<= bitsNeeded;
+            m_inbufBitCount = 0;
+        }
+
+        // Grab next 8 bits of input from buffer.
+        m_inbufBits = ( m_inbufBits << 8 ) | m_inbuf[m_inbufPos++];
+        m_inbufBitCount += 8;
+    }
+
+    // Calculate result
+    m_inbufBitCount -= bitsNeeded;
+    bits |= ( m_inbufBits >> m_inbufBitCount ) & ( ( 1 << bitsNeeded ) - 1 );
+    assert( bits == ( bits & ( ~0L >> ( 32 - bitsWanted ) ) ) );
+    return bits;
+}
 
 
 inline uint32_t
