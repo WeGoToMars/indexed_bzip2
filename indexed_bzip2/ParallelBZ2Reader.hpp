@@ -179,7 +179,7 @@ private:
          * threads finish at the same time and now the bit string finder would need to find n new blocks
          * in the time it takes to decode one block! In general, the higher this number, the higher the
          * the memory usage. */
-        const size_t maxBlocksToQueue = 3 * std::thread::hardware_concurrency();
+        const size_t maxBlocksToQueue = 16 * std::thread::hardware_concurrency();
 
         size_t bitOffset = std::numeric_limits<size_t>::max();
         while ( !m_cancelThreads ) {
@@ -219,6 +219,8 @@ private:
         std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Boot" ).str();
         std::list<decltype( m_threadPool.submitTask( std::function<void()>() ) )> futures;
 
+        std::this_thread::sleep_for( std::chrono::seconds( 3 ) );
+
         while ( !m_cancelThreads ) {
             /** @todo make this work after seeking or after setBlockOffsets in general! */
             if ( m_blocks.completed() )  {
@@ -250,8 +252,8 @@ private:
             /** @todo only decode up to hardware_concurrency blocks, then wait for old ones to be cleared! */
             if ( m_blocks.unprocessedBlockCount() == 0 ) {
                 m_blocks.waitUntilChanged( 0.01 ); /* Every 100ms, check whether this thread has been canceled. */
-                std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Waiting for new blocks!"
-                               << "Unprocessed tasks in thread pool:" << m_threadPool.unprocessedTasksCount() ).str();
+                //std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Waiting for new blocks!"
+                //               << "Unprocessed tasks in thread pool:" << m_threadPool.unprocessedTasksCount() ).str();
             }
         }
 

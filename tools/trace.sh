@@ -82,4 +82,4 @@ time ./pbzcat /dev/shm/large.bz2 &>/dev/null
 #  - after increasing internal buffers from 4kiB to 1MiB => 0.13s, ~42% readBlockData, ~42% decodeStream
 #
 
-scorep-score -r scorep-bzcat/profile.cubex
+scorep-score -r "$( 'ls' -1rtd scorep*/ | tail -1 )/profile.cubex"
