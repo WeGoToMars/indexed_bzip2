@@ -2,6 +2,15 @@
 
 set -e
 
+# Check perf_event_paranoid setting for sampling support
+if [[ "$( cat /proc/sys/kernel/perf_event_paranoid )" != 1 ]]; then
+    echo "Your perf_event_paranoid is not set to allow sampling support with Score-P for non-root users."
+    echo "Please enable it temporarily with:"
+    echo "  sudo sh -c 'echo 1 > /proc/sys/kernel/perf_event_paranoid'"
+    echo "or permanently with:"
+    echo "  sudo sh -c 'echo kernel.perf_event_paranoid=1 > /etc/sysctl.d/90-perf_event_paranoid.conf"
+fi
+
 export SCOREP_ENABLE_TRACING=true
 export SCOREP_TOTAL_MEMORY=1G
 #export SCOREP_EXPERIMENT_DIRECTORY=scorep-bzcat

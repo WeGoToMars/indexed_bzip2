@@ -11,6 +11,7 @@
 #include <utility>
 
 #include <BitStringFinder.hpp>
+#include <ParallelBitStringFinder.hpp>
 #include <common.hpp>
 
 //#define BENCHMARK
@@ -572,6 +573,27 @@ findBitStrings4( const std::string& filename )
 }
 
 
+std::vector<size_t>
+findBitStrings5( const std::string& filename )
+{
+    std::vector<size_t> matches;
+
+    ParallelBitStringFinder<bitStringToFindSize> bitStringFinder( filename, bitStringToFind );
+    while( true )  {
+        matches.push_back( bitStringFinder.find() );
+        std::cerr << "Found " << matches.back() << "\n";
+        if ( matches.back() == std::numeric_limits<size_t>::max() ) {
+            matches.pop_back();
+            break;
+        }
+        if ( ( matches.size() > 1 ) && ( matches[matches.size()-2] >= matches.back() ) ) {
+            throw std::logic_error( "Returned offsets should be unique and monotonically increasing!" );
+        }
+    }
+    return matches;
+}
+
+
 int main( int argc, char** argv )
 {
     if ( argc < 2 ) {
@@ -584,7 +606,8 @@ int main( int argc, char** argv )
     //const auto blockOffsets = findBitStrings( filename ); // ~520ms // ~1.7s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings2( filename ); // ~9.5s // ~100s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings3( filename ); // ~520ms // 6.4s on /dev/shm with 911MiB large.bz2
-    const auto blockOffsets = findBitStrings4( filename );
+    // const auto blockOffsets = findBitStrings4( filename );
+    const auto blockOffsets = findBitStrings5( filename );
     /* lookup table and manual minimal bit reader were virtually equally fast
      * probably because the encrypted SSD was the limiting factor -> repeat with /dev/shm
      * => searching is roughly 4x slower, so multithreading on 4 threads should make it equally fast,

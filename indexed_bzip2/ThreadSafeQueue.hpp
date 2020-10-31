@@ -84,7 +84,7 @@ public:
     }
 
 private:
-    mutable std::mutex m_mutex;
-    std::queue<T> m_queue;
+    mutable std::mutex      m_mutex;
+    std::queue<T>           m_queue;
     std::condition_variable m_changed;
 };

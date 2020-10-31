@@ -1,6 +1,6 @@
 CPP=clang++
-CFLAGS=-I ../indexed_bzip2 -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -g
 CFLAGS=-I ../indexed_bzip2 -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -O3 -DNDEBUG
+CFLAGS=-I ../indexed_bzip2 -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -g
 LFLAGS=-pthread
 
 all: bzcat blockfinder pbzcat
@@ -26,5 +26,5 @@ pbzcat.o: pbzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BlockDatabase.h
 blockfinder: blockfinder.o
 	$(CPP) $(LFLAGS) $^ -o $@
 
-blockfinder.o: blockfinder.cpp ../indexed_bzip2/BitStringFinder.hpp ../indexed_bzip2/common.hpp
+blockfinder.o: blockfinder.cpp ../indexed_bzip2/BitStringFinder.hpp ../indexed_bzip2/ParallelBitStringFinder.hpp ../indexed_bzip2/common.hpp
 	$(CPP) $(CFLAGS) -c $< -o $@

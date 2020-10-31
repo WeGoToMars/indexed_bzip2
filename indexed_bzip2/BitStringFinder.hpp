@@ -48,7 +48,9 @@ public:
         BitStringFinder( bitStringToFind, fileBufferSizeBytes )
     {
         m_file = std::fopen( filePath.c_str(), "rb" );
-        fseek( m_file, 0, SEEK_SET );
+        if ( seekable() ) {
+            fseek( m_file, 0, SEEK_SET );
+        }
     }
 
     BitStringFinder( int      fileDescriptor,
@@ -58,7 +60,9 @@ public:
     {
         /** dup is not strong enough to be able to independently seek in the old and the dup'ed fd! */
         m_file = std::fopen( fdFilePath( fileDescriptor ).c_str(), "rb" );
-        fseek( m_file, 0, SEEK_SET );
+        if ( seekable() ) {
+            fseek( m_file, 0, SEEK_SET );
+        }
     }
 
     BitStringFinder( const char* buffer,
@@ -69,20 +73,41 @@ public:
         m_buffer.assign( buffer, buffer + size );
     }
 
+    [[nodiscard]] bool
+    seekable() const
+    {
+        if ( m_file == nullptr ) {
+            return true;
+        }
+
+        struct stat fileStats;
+        fstat( ::fileno( m_file ), &fileStats );
+        return !S_ISFIFO( fileStats.st_mode );
+    }
+
+    [[nodiscard]] bool
+    eof() const
+    {
+        if ( m_file != nullptr ) {
+            return m_buffer.empty() && std::feof( m_file );
+        }
+        return m_buffer.empty();
+    }
+
     /**
      * @return the next match or std::numeric_limits<size_t>::max() if the end was reached.
      */
     size_t
     find();
 
-private:
+protected:
     BitStringFinder( uint64_t    bitStringToFind,
                      size_t      fileBufferSizeBytes = 1*1024*1024 ) :
-        m_fileChunksInBytes( std::max( fileBufferSizeBytes,
-                                       static_cast<size_t>( ceilDiv( bitStringSize, CHAR_BIT ) ) ) ),
-        m_bitStringToFind  ( bitStringToFind & mask( bitStringSize ) ),
+        m_bitStringToFind  ( bitStringToFind & mask<uint64_t>( bitStringSize ) ),
         m_movingBitsToKeep ( bitStringSize > 0 ? bitStringSize - 1u : 0u ),
-        m_movingBytesToKeep( ceilDiv( m_movingBitsToKeep, CHAR_BIT ) )
+        m_movingBytesToKeep( ceilDiv( m_movingBitsToKeep, CHAR_BIT ) ),
+        m_fileChunksInBytes( std::max( fileBufferSizeBytes,
+                                       static_cast<size_t>( ceilDiv( bitStringSize, CHAR_BIT ) ) ) )
     {
         if ( m_movingBytesToKeep >= m_fileChunksInBytes ) {
             std::stringstream msg;
@@ -92,15 +117,10 @@ private:
         }
     }
 
-    bool
-    eof() const
-    {
-        if ( m_file != nullptr ) {
-            return m_buffer.empty() && std::feof( m_file );
-        }
-        return m_buffer.empty();
-    }
+    size_t
+    refillBuffer();
 
+public:
     /**
      * @verbatim
      * 63                48                  32                  16        8         0
@@ -112,16 +132,13 @@ private:
      *
      * @param length the number of lowest bits which should be 1 (rest are 0)
      */
-    static constexpr uint64_t
+    template<typename T>
+    static constexpr T
     mask( uint8_t length )
     {
-        return ~static_cast<uint64_t>( 0 ) >> ( sizeof( uint64_t ) * CHAR_BIT - length );
+        return ~static_cast<T>( 0 ) >> ( sizeof( T ) * CHAR_BIT - length );
     }
 
-    size_t
-    refillBuffer();
-
-public:
     static ShiftedLUTTable
     createdShiftedBitStringLUT( uint64_t bitString,
                                 bool     includeLastFullyShifted = false );
@@ -141,30 +158,15 @@ public:
         return filename.str();
     }
 
-private:
-    std::FILE* m_file = nullptr;
-    /** This is not the current size of @ref m_buffer but the number of bytes to read from @ref m_file if it is empty */
-    const size_t m_fileChunksInBytes;
-    std::vector<char> m_buffer;
-    /**
-     * In some way this is the buffer for the input buffer.
-     * It is a moving window of bitStringSize bits which can be directly compared to m_bitString
-     * This moving window also ensure that bit strings at file chunk boundaries are recognized correctly!
-     */
-    uint64_t m_movingWindow = 0;
+protected:
+    const uint64_t m_bitStringToFind;
 
+    std::vector<char> m_buffer;
     /**
      * How many bits from m_buffer bits are already read. The first bit string comparison will be done
      * after m_nTotalBytesRead * CHAR_BIT + m_bufferBitsRead >= bitStringSize
      */
     size_t m_bufferBitsRead = 0;
-    /**
-     * This value is incremented whenever the buffer is refilled. It basically acts like an overflow counter
-     * for @ref m_bufferBitsRead and is required to return the absolute bit pos.
-     */
-    size_t m_nTotalBytesRead = 0;
-
-    const uint64_t m_bitStringToFind;
 
     /**
      * If the bit string is only one bit long, then we don't need to keep bits from the current buffer.
@@ -178,6 +180,23 @@ private:
      */
     const uint8_t m_movingBitsToKeep;
     const uint8_t m_movingBytesToKeep;
+
+    std::FILE* m_file = nullptr;
+
+    /** This is not the current size of @ref m_buffer but the number of bytes to read from @ref m_file if it is empty */
+    const size_t m_fileChunksInBytes;
+    /**
+     * This value is incremented whenever the buffer is refilled. It basically acts like an overflow counter
+     * for @ref m_bufferBitsRead and is required to return the absolute bit pos.
+     */
+    size_t m_nTotalBytesRead = 0;
+
+    /**
+     * In some way this is the buffer for the input buffer.
+     * It is a moving window of bitStringSize bits which can be directly compared to m_bitString
+     * This moving window also ensure that bit strings at file chunk boundaries are recognized correctly!
+     */
+    uint64_t m_movingWindow = 0;
 };
 
 
@@ -326,7 +345,7 @@ BitStringFinder<bitStringSize>::find()
 
         #elif ALGO == 2
 
-        const auto bitMask = mask( bitStringSize );
+        const auto bitMask = mask<uint64_t>( bitStringSize );
 
         /* Initialize the moving window with bitStringSize-1 bits.
          * Note that one additional bit is loaded before the first comparison.

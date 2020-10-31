@@ -13,46 +13,12 @@
 #include "BZ2Reader.hpp"
 #include "BitStringFinder.hpp"
 #include "BlockDatabase.hpp"
+#include "common.hpp"
 #include "ThreadPool.hpp"
 #include "ThreadSafeQueue.hpp"
 
 
 #include <sstream>
-
-
-/**
- * Use like this: std::cerr << ( ThreadSafeOutput() << "Hello" << i << "there" ).str();
- */
-class ThreadSafeOutput
-{
-public:
-    ThreadSafeOutput()
-    {
-        m_out << "[" << std::this_thread::get_id() << "]";
-    }
-
-    template<typename T>
-    ThreadSafeOutput&
-    operator<<( const T& value )
-    {
-        m_out << " " << value;
-        return *this;
-    }
-
-    operator std::string() const
-    {
-        return m_out.str() + "\n";
-    }
-
-    std::string
-    str() const
-    {
-        return m_out.str() + "\n";
-    }
-
-private:
-    std::stringstream m_out;
-};
 
 
 /**
@@ -179,7 +145,7 @@ private:
          * threads finish at the same time and now the bit string finder would need to find n new blocks
          * in the time it takes to decode one block! In general, the higher this number, the higher the
          * the memory usage. */
-        const size_t maxBlocksToQueue = 16 * std::thread::hardware_concurrency();
+        const size_t maxBlocksToQueue = 3 * std::thread::hardware_concurrency();
 
         size_t bitOffset = std::numeric_limits<size_t>::max();
         while ( !m_cancelThreads ) {
@@ -218,8 +184,6 @@ private:
     {
         std::cerr << ( ThreadSafeOutput() << "[Work Dispatcher] Boot" ).str();
         std::list<decltype( m_threadPool.submitTask( std::function<void()>() ) )> futures;
-
-        std::this_thread::sleep_for( std::chrono::seconds( 3 ) );
 
         while ( !m_cancelThreads ) {
             /** @todo make this work after seeking or after setBlockOffsets in general! */
