@@ -117,16 +117,23 @@ private:
      * The findBitString function only returns the first result, so this worker main basically just calls it in a
      * a loop with increasing start offsets. It also handles all the parallel synchronization stuff like sending
      * the results to the reading thread through the result buffer.
+     * When it is finished, it will return std::numeric_limits<size_t>::max() to signal that the future can be waited
+     * for.
+     *
+     * @param buffer pointer data to look for bitstrings. [buffer, buffer+size) will be searched.
+     * @param firstBitsToIgnore This will effectively force matches to only be returned if
+     *                          foundOffset >= firstBitsToIgnore
+     * @param bitOffsetToAdd All found offsets relative to @p buffer should add this in order to return the global
+     *                       bit offsets of interest.
      */
     static void
     workerMain( const char*    const buffer,
                 size_t         const size,
                 uint8_t        const firstBitsToIgnore,
                 uint64_t       const bitStringToFind,
+                size_t         const bitOffsetToAdd,
                 ThreadResults* const result )
     {
-        FinallyNotify notifyGuard( result->changed );
-
         for ( size_t bufferBitsRead = firstBitsToIgnore; bufferBitsRead < size * CHAR_BIT; ) {
             const auto byteOffset = bufferBitsRead / CHAR_BIT;
             const auto bitOffset  = bufferBitsRead % CHAR_BIT;
@@ -141,10 +148,15 @@ private:
 
             {
                 std::lock_guard<std::mutex> lock( result->mutex );
-                result->foundOffsets.push( bufferBitsRead );
+                result->foundOffsets.push( bitOffsetToAdd + bufferBitsRead );
+                result->changed.notify_one();
             }
             bufferBitsRead += 1;
         }
+
+        std::lock_guard<std::mutex> lock( result->mutex );
+        result->foundOffsets.push( std::numeric_limits<size_t>::max() );
+        result->changed.notify_one();
     }
 
 private:
@@ -190,7 +202,14 @@ ParallelBitStringFinder<bitStringSize>::find()
             while( !result.foundOffsets.empty() || result.future.valid() ) {
                 /* In the easiest case we have something to return already. */
                 if ( !result.foundOffsets.empty() ) {
-                    const auto foundOffset = this->m_nTotalBytesRead * CHAR_BIT + result.foundOffsets.front();
+                    if ( result.foundOffsets.front() == std::numeric_limits<size_t>::max() ) {
+                        result.foundOffsets.pop();
+                        if ( result.future.valid() ) {
+                            result.future.get();
+                        }
+                        break;
+                    }
+                    const auto foundOffset = result.foundOffsets.front();
                     result.foundOffsets.pop();
                     return foundOffset;
                 }
@@ -202,12 +221,9 @@ ParallelBitStringFinder<bitStringSize>::find()
                     return !result.foundOffsets.empty() ||
                            ( result.future.wait_for( std::chrono::seconds( 0 ) ) == std::future_status::ready );
                 } );
-                std::cerr << "Got lock\n";
 
                 if ( result.future.wait_for( std::chrono::seconds( 0 ) ) == std::future_status::ready ) {
-                    std::cerr << "Wait for thread\n";
                     result.future.get();
-                    std::cerr << "Thread finished\n";
                 }
             }
         }
@@ -221,7 +237,7 @@ ParallelBitStringFinder<bitStringSize>::find()
 
         /* Check whether we have read everything in the current buffer. */
         if ( this->m_bufferBitsRead >= this->m_buffer.size() * CHAR_BIT ) {
-            std::cerr << "refill buffer\n";
+            //std::cerr << "refill buffer\n";
             const auto nBytesRead = BaseType::refillBuffer();
             if ( nBytesRead == 0 ) {
                 return std::numeric_limits<size_t>::max();
@@ -229,7 +245,7 @@ ParallelBitStringFinder<bitStringSize>::find()
         }
 
         /* Start worker threads using the thread pool and the current buffer. */
-        std::cerr << "Start new workers\n";
+        //std::cerr << "Start new workers\n";
         const auto nSubdivisions = m_threadPool.size();
         const auto subdivisionSize = ceilDiv( this->m_buffer.size(), nSubdivisions ) + this->m_movingBytesToKeep;
         assert( subdivisionSize > this->m_movingBytesToKeep );
@@ -241,12 +257,18 @@ ParallelBitStringFinder<bitStringSize>::find()
 
             const auto* buffer = this->m_buffer.data() + byteOffset;
             assert( byteOffset < this->m_buffer.size() );
-            const auto size = std::min( subdivisionSize,
-                                        this->m_buffer.size() - byteOffset );
+            const auto size = std::min( subdivisionSize, this->m_buffer.size() - byteOffset );
 
-            std::cerr << " Find from offset " << byteOffset << "B " << firstBitsToIgnore << "b size " << size << "\n";
-            result.future = m_threadPool.submitTask( [this, buffer, size, firstBitsToIgnore, &result] () {
-                workerMain( buffer, size, firstBitsToIgnore, this->m_bitStringToFind, &result );
+            //std::cerr << " Find from offset " << byteOffset << "B " << firstBitsToIgnore << "b size " << size << "\n";
+            result.future = m_threadPool.submitTask( [=, &result] () {
+                workerMain(
+                    buffer,
+                    size,
+                    firstBitsToIgnore,
+                    this->m_bitStringToFind,
+                    ( this->m_nTotalBytesRead + byteOffset ) * CHAR_BIT,
+                    &result
+                );
             } );
 
             this->m_bufferBitsRead += subdivisionSize * CHAR_BIT - this->m_movingBitsToKeep;

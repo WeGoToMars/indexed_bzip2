@@ -573,15 +573,74 @@ findBitStrings4( const std::string& filename )
 }
 
 
+/**
+ * benchmark on ~8GiB file:
+ *    head -c $(( 8 * 1024 * 1024 * 1024 )) /dev/urandom | lbzcat --compress > /dev/shm/huge.bz2
+ * make blockfinder && time ./blockfinder /dev/shm/huge.bz2
+ *    ~4.2s
+ * Vary parallelisation and increase chunk size proportionally so that the subdivisions chunks are constant:
+ *  p | real time
+ * ---+-----------
+ *  1 |   17.1 s
+ *  2 |   10.5 s
+ *  4 |    7.9 s
+ *  8 |    5.6 s
+ * 16 |    4.9 s
+ * 24 |    4.2 s
+ * 32 |    4.6 s
+ * 48 |    4.2 s
+ *  -> Problem with the current implementation is very likely stragglers! -> trace it.
+ *     Because I'm not double buffering and therefore have to wait for all to finish before starting the next batch!
+ *     Ideally, I'd start a new parallel thread as soon as I know it ended.
+ *     Also note that the results of 4.2s mean ~2GB/s bandwidth!
+ *          sudo apt install sysbench
+ *          sysbench memory --memory-block-size=$(( 256*1024*1024 )) run
+ *              Total operations: 400 (   41.71 per second)
+ *
+ *              102400.00 MiB transferred (10677.87 MiB/sec)
+ *
+ *
+ *              General statistics:
+ *                  total time:                          9.5886s
+ *                  total number of events:              400
+ *
+ *              Latency (ms):
+ *                      min:                                   22.97
+ *                      avg:                                   23.97
+ *                      max:                                   32.39
+ *                      95th percentile:                       25.74
+ *                      sum:                                 9586.51
+ *           => ~10.4 GiB/s, so roughly factor 5 faster than I can search in RAM.
+ */
 std::vector<size_t>
 findBitStrings5( const std::string& filename )
 {
     std::vector<size_t> matches;
 
-    ParallelBitStringFinder<bitStringToFindSize> bitStringFinder( filename, bitStringToFind );
+#ifndef NDEBUG
+    BitReader bitReader( filename );
+#endif
+
+    const auto parallelisation = 48; //std::thread::hardware_concurrency();
+    ParallelBitStringFinder<bitStringToFindSize> bitStringFinder(
+        filename, bitStringToFind, parallelisation, 0, parallelisation * 1*1024*1024
+    );
     while( true )  {
         matches.push_back( bitStringFinder.find() );
-        std::cerr << "Found " << matches.back() << "\n";
+
+        #ifndef NDEBUG
+            const auto offset = matches.back();
+            std::cerr << "Found " << offset << " = " << offset / 8 << " B " << offset % 8 << " b";
+            if ( ( offset >= 0 ) && ( offset < bitReader.size() ) ) {
+                bitReader.seek( offset );
+                const auto magicBytes = bitReader.read( 32 );
+                std::cerr << " -> magic bytes: 0x" << std::hex << magicBytes << std::dec << "\n";
+                if ( magicBytes != 0x3141'5926 ) {
+                    throw std::logic_error( "Magic Bytes do not match!" );
+                }
+            }
+        #endif
+
         if ( matches.back() == std::numeric_limits<size_t>::max() ) {
             matches.pop_back();
             break;
@@ -606,8 +665,8 @@ int main( int argc, char** argv )
     //const auto blockOffsets = findBitStrings( filename ); // ~520ms // ~1.7s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings2( filename ); // ~9.5s // ~100s on /dev/shm with 911MiB large.bz2
     //const auto blockOffsets = findBitStrings3( filename ); // ~520ms // 6.4s on /dev/shm with 911MiB large.bz2
-    // const auto blockOffsets = findBitStrings4( filename );
-    const auto blockOffsets = findBitStrings5( filename );
+    //const auto blockOffsets = findBitStrings4( filename ); // ~1.8s on /dev/shm with 911MiB large.bz2
+    const auto blockOffsets = findBitStrings5( filename ); // ~0.5s on /dev/shm with 911MiB large.bz2 and 24 threads
     /* lookup table and manual minimal bit reader were virtually equally fast
      * probably because the encrypted SSD was the limiting factor -> repeat with /dev/shm
      * => searching is roughly 4x slower, so multithreading on 4 threads should make it equally fast,
