@@ -1,9 +1,9 @@
 CPP=clang++
-CFLAGS=-I ../indexed_bzip2 -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -g
-CFLAGS=-I ../indexed_bzip2 -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -O3 -DNDEBUG
+CFLAGS=-I ../indexed_bzip2 -I ../external/cxxopts/include -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -g
+CFLAGS=-I ../indexed_bzip2 -I ../external/cxxopts/include -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -O3 -DNDEBUG
 LFLAGS=-pthread
 
-all: bzcat blockfinder pbzcat
+all: bzcat blockfinder ibzip2
 
 bzcatpipe: bzcatpipe.
 	$(CPP) $^ -o $@
@@ -17,10 +17,22 @@ bzcat: bzcat.o
 bzcat.o: bzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BZ2Reader.hpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/FileReader.hpp Makefile
 	$(CPP) $(CFLAGS) -c $< -o $@
 
-pbzcat: pbzcat.o
+ibzip2: ibzip2.o
 	$(CPP) $(LFLAGS) $^ -o $@
 
-pbzcat.o: pbzcat.cpp ../indexed_bzip2/bzip2.hpp ../indexed_bzip2/BlockDatabase.hpp ../indexed_bzip2/BZ2Reader.hpp ../indexed_bzip2/ParallelBZ2Reader.hpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/ThreadSafeQueue.hpp ../indexed_bzip2/ThreadPool.hpp ../indexed_bzip2/FileReader.hpp ../indexed_bzip2/BitStringFinder.hpp ../indexed_bzip2/common.hpp Makefile
+ibzip2.o: ibzip2.cpp \
+		  ../indexed_bzip2/bzip2.hpp \
+		  ../indexed_bzip2/BlockDatabase.hpp \
+		  ../indexed_bzip2/BZ2Reader.hpp \
+		  ../indexed_bzip2/ParallelBZ2Reader.hpp \
+		  ../indexed_bzip2/BitReader.hpp \
+		  ../indexed_bzip2/ThreadSafeQueue.hpp \
+		  ../indexed_bzip2/ThreadPool.hpp \
+		  ../indexed_bzip2/FileReader.hpp \
+		  ../indexed_bzip2/BitStringFinder.hpp \
+		  ../indexed_bzip2/common.hpp \
+		  ../external/cxxopts/include/cxxopts.hpp \
+		  Makefile
 	$(CPP) $(CFLAGS) -c $< -o $@
 
 blockfinder: blockfinder.o

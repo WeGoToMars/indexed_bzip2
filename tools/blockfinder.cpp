@@ -611,6 +611,8 @@ findBitStrings4( const std::string& filename )
  *                      95th percentile:                       25.74
  *                      sum:                                 9586.51
  *           => ~10.4 GiB/s, so roughly factor 5 faster than I can search in RAM.
+ *      Double buffering would also allow to fill the buffer in the background in parallel!
+ *      This might help a lot, assuming the buffer filling is the serial bottleneck.
  */
 std::vector<size_t>
 findBitStrings5( const std::string& filename )

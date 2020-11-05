@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include <cxxopts.hpp>
+
 #include <BitReader.hpp>
 #include <ParallelBZ2Reader.hpp>
 
@@ -24,10 +26,60 @@ operator<<( std::ostream& out, std::map<T1,T2> data )
 
 int main( int argc, char** argv )
 {
+    cxxopts::Options options( "ibzip2",
+                              "A bzip2 decompressor tool based on the indexed_bzip2 backend from ratarmount" );
+    options.add_options( "Decompression" )
+        ( "c,stdout"     , "Output to standard output. This is the default, when reading from standard input." )
+        ( "d,decompress" , "Force decompression. Only for compatibility. No compression supported anyway." )
+        ( "f,force"      , "Force overwriting existing output file and actual decoding even if piped to /dev/null." )
+        ( "i,input"      , "Input file. Is none is given, data is read from standard input.",
+          cxxopts::value<std::vector<std::string> >() )
+        ( "k,keep"       , "Keep (do not delete) input file." )
+        ( "t,test"       , "Test compressed file integrity." )
+
+        ( "p,block-finder-parallelism",
+          "This only has an effect if the parallel decoder is used with the -p option. "
+          "If an optional >= 1 is given, then these are the number of threads to use for finding bzip2 blocks. ",
+          cxxopts::value<unsigned int>()->default_value( "1" )->implicit_value( "0" ) )
+
+        ( "P,decoder-parallelism",
+          "Use the parallel decoder. "
+          "If an optional >= 1 is given, then these are the number of decoder threads to use. "
+          "Note that there might be further threads being started with non-decoding work.",
+          cxxopts::value<unsigned int>()->default_value( "1" )->implicit_value( "0" ) );
+
+    options.add_options( "Output" )
+        ( "h,help"   , "Print this help mesage." )
+        ( "q,quiet"  , "Suppress noncritical error messages." )
+        ( "v,verbose", "Be verbose. A second -v (or shorthand -vv) gives even more verbosity." )
+        ( "V,version", "Display software version." )
+        ( "l,list-compressed-offsets",
+          "List only the bzip2 block offsets given in bits one per line to the specified output file.",
+          cxxopts::value<std::vector<std::string> >() )
+        ( "L,list-offsets",
+          "List bzip2 block offsets in bits and also the corresponding offsets in the decoded data at the beginning "
+          "of each block in bytes as a comma separated pair per line '<encoded bits>,<decoded bytes>'." );
+
+    options.parse_positional( { "input" } );
+
+    const auto parsedArgs = options.parse( argc, argv );
+
+    if ( parsedArgs.count( "help" ) > 0 ) {
+        std::cout
+        << options.help()
+        << "\n"
+        << "If no file names are given, ibzip2 decompresses from standard input to standard output.\n"
+        << "If the output is discarded by piping to /dev/null, then the actual decoding step might\n"
+        << "be omitted if neither --test nor -l nor -L nor --force are given."
+        << std::endl;
+        return 0;
+    }
+
     if ( argc < 2 ) {
         std::cerr << "A bzip2 file name to decompress must be specified!\n";
         return 1;
     }
+
     const std::string filename ( argv[1] );
     const int bufferSize = argc > 2 ? std::atoi( argv[2] ) : 0;
 
