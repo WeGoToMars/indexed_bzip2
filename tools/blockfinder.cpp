@@ -18,7 +18,8 @@
 
 namespace
 {
-constexpr uint64_t bitStringToFind = 0x314159265359;
+constexpr uint64_t bitStringToFind = 0x314159265359; /* bcd(pi) */
+//constexpr uint64_t bitStringToFind = 0x177245385090ULL; /* bcd(sqrt(pi)) */
 constexpr uint8_t bitStringToFindSize = 48;
 }
 
@@ -635,9 +636,9 @@ findBitStrings5( const std::string& filename )
             std::cerr << "Found " << offset << " = " << offset / 8 << " B " << offset % 8 << " b";
             if ( ( offset >= 0 ) && ( offset < bitReader.size() ) ) {
                 bitReader.seek( offset );
-                const auto magicBytes = bitReader.read( 32 );
+                const auto magicBytes = ( static_cast<uint64_t>( bitReader.read( 32 ) ) << 16 ) | bitReader.read( 16 );
                 std::cerr << " -> magic bytes: 0x" << std::hex << magicBytes << std::dec << "\n";
-                if ( magicBytes != 0x3141'5926 ) {
+                if ( magicBytes != bitStringToFind ) {
                     throw std::logic_error( "Magic Bytes do not match!" );
                 }
             }
@@ -681,9 +682,9 @@ int main( int argc, char** argv )
         std::cerr << offset / 8 << " B " << offset % 8 << " b";
         if ( ( offset >= 0 ) && ( offset < bitReader.size() ) ) {
             bitReader.seek( offset );
-            const auto magicBytes = bitReader.read( 32 );
+            const auto magicBytes = ( static_cast<uint64_t>( bitReader.read( 32 ) ) << 16 ) | bitReader.read( 16 );
             std::cerr << " -> magic bytes: 0x" << std::hex << magicBytes << std::dec;
-            if ( magicBytes != 0x3141'5926 ) {
+            if ( magicBytes != bitStringToFind ) {
                 throw std::logic_error( "Magic Bytes do not match!" );
             }
         }
