@@ -3,7 +3,7 @@ CFLAGS=-I ../indexed_bzip2 -I ../external/cxxopts/include -std=c++17 -Wall -Wext
 CFLAGS=-I ../indexed_bzip2 -I ../external/cxxopts/include -std=c++17 -Wall -Wextra -Wshadow -Wsuggest-override -O3 -DNDEBUG
 LFLAGS=-pthread
 
-all: bzcat blockfinder ibzip2
+all: bzcat blockfinder ibzip2 bitpatternstats
 
 bzcatpipe: bzcatpipe.
 	$(CPP) $^ -o $@
@@ -39,4 +39,10 @@ blockfinder: blockfinder.o
 	$(CPP) $(LFLAGS) $^ -o $@
 
 blockfinder.o: blockfinder.cpp ../indexed_bzip2/BitStringFinder.hpp ../indexed_bzip2/ParallelBitStringFinder.hpp ../indexed_bzip2/common.hpp Makefile
+	$(CPP) $(CFLAGS) -c $< -o $@
+
+bitpatternstats: bitpatternstats.o
+	$(CPP) $(LFLAGS) $^ -o $@
+
+bitpatternstats.o: bitpatternstats.cpp ../indexed_bzip2/BitReader.hpp ../indexed_bzip2/common.hpp Makefile
 	$(CPP) $(CFLAGS) -c $< -o $@
