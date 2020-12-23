@@ -9,3 +9,9 @@ target_sources(testThreadPool PRIVATE ${CMAKE_CURRENT_LIST_DIR}/testThreadPool.c
 target_link_libraries(testThreadPool PRIVATE indexed_bzip2_parallel)
 add_test(NAME "Test Thread Pool" COMMAND testThreadPool)
 add_dependencies(check testThreadPool)
+
+add_executable(testParallelBZ2Reader)
+target_sources(testParallelBZ2Reader PRIVATE ${CMAKE_CURRENT_LIST_DIR}/testParallelBZ2Reader.cpp)
+target_link_libraries(testParallelBZ2Reader PRIVATE indexed_bzip2_parallel)
+add_test(NAME "Test Parallel BZ2 Reader" COMMAND testParallelBZ2Reader)
+add_dependencies(check testParallelBZ2Reader)

@@ -15,10 +15,13 @@ add_library(indexed_bzip2_parallel INTERFACE)
 target_include_directories(indexed_bzip2_parallel INTERFACE ${CMAKE_CURRENT_LIST_DIR})
 target_sources(indexed_bzip2_parallel INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/BitStringFinder.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/BlockDatabase.hpp
     ${CMAKE_CURRENT_LIST_DIR}/common.hpp
     ${CMAKE_CURRENT_LIST_DIR}/FileReader.hpp
     ${CMAKE_CURRENT_LIST_DIR}/JoiningThread.hpp
     ${CMAKE_CURRENT_LIST_DIR}/ParallelBitStringFinder.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/ParallelBZ2Reader.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/ThreadSafeQueue.hpp
 )
 target_link_libraries(indexed_bzip2_parallel INTERFACE indexed_bzip2 Threads::Threads)
 target_compile_features(indexed_bzip2_parallel INTERFACE cxx_std_17)
