@@ -21,6 +21,235 @@
 #include <sstream>
 
 
+class ConcurrencyBroker
+{
+public:
+    void
+    waitForChange( double timeoutSeconds = std::numeric_limits<double>::infinity() )
+    {
+        if ( std::isnan( timeoutSeconds ) || ( timeoutSeconds < 0. ) ) {
+            throw std::invalid_argument( "Time must be a non-negative number!" );
+        }
+
+        std::unique_lock<std::mutex> lock( m_mutex );
+        if ( timeoutSeconds == std::numeric_limits<double>::infinity() ) {
+            m_changed.wait( lock );
+        } else {
+            const auto timeout = std::chrono::nanoseconds( static_cast<size_t>( timeoutSeconds * 1e9 ) );
+            m_changed.wait_for( lock, timeout );
+        }
+    }
+
+    std::mutex&
+    mutex()
+    {
+        return m_mutex;
+    }
+
+    void
+    notifyChange()
+    {
+        m_changed.notify_all();
+    }
+
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_changed;
+};
+
+
+/**
+ * Stores results in the order they are pushed and also stores a flag signalizing that nothing will be pushed anymore.
+ * The blockfinder will push block offsets and other actors, e.g., the prefetcher, may wait for and read the offsets.
+ * Results will never be deleted, so you can assume the size to only grow.
+ */
+template<typename Value>
+class StreamedResults
+{
+public:
+    void
+    waitForChange( double timeoutSeconds = std::numeric_limits<double>::infinity() )
+    {
+        /* Will never change again, so don't wait. */
+        if ( !m_finalized ) {
+            m_broker.waitForChange( timeoutSeconds );
+        }
+    }
+
+    [[nodiscard]] size_t
+    size() const
+    {
+        return m_results.size();
+    }
+
+    [[nodiscard]] std::optional<Value>
+    get( size_t position ) const
+    {
+        std::scoped_lock lock( m_broker.mutex() );
+        if ( position < m_results.size() ) {
+            return m_results[position];
+        }
+        return std::nullopt;
+    }
+
+    void
+    push( Value value )
+    {
+        std::scoped_lock lock( m_broker.mutex() );
+        m_results.emplace_back( std::move( value ) );
+        m_broker.notifyChange();
+    }
+
+    void
+    finalize()
+    {
+        std::scoped_lock lock( m_broker.mutex() );
+        m_finalized = true;
+        m_broker.notifyChange();
+    }
+
+    [[nodiscard]] bool
+    finalized() const
+    {
+        return m_finalized;
+    }
+
+private:
+    mutable ConcurrencyBroker m_broker;
+    std::deque<Value> m_results;
+    std::atomic<bool> m_finalized = false;
+};
+
+
+/**
+ * Will asynchronously find the next n block offsets after the last highest requested one.
+ * It might find false positives and it won't find EOS blocks, so there is some post-processing necessary.
+ */
+class BlockFinder
+{
+public:
+    ~BlockFinder()
+    {
+        std::scoped_lock( m_mutex );
+        m_cancelThread = true;
+        m_changed.notify_all();
+    }
+
+    explicit
+    BlockFinder( int fileDescriptor ) :
+        m_bitStringFinder( fileDescriptor, bzip2::MAGIC_BITS_BLOCK )
+    {}
+
+    explicit
+    BlockFinder( const char* buffer,
+                 size_t      size ) :
+        m_bitStringFinder( buffer, size, bzip2::MAGIC_BITS_BLOCK )
+    {}
+
+    [[nodiscard]] std::optional<size_t>
+    next()
+    {
+        return get( m_lastRequestedBlockNumber + 1 );
+    }
+
+    [[nodiscard]] size_t
+    size() const
+    {
+        return m_blockOffsets.size();
+    }
+
+    [[nodiscard]] bool
+    finalized() const
+    {
+        return m_blockOffsets.finalized();
+    }
+
+    /**
+     * In contrast to StreamedResults::operator[], this call will track the requested block so that the
+     * finder loop will look up to that block.
+     * Therefore, either a result can be returned or if not it means we are finalized and the requested block
+     * is out of range!
+     */
+    [[nodiscard]] std::optional<size_t>
+    get( size_t blockNumber )
+    {
+        m_lastRequestedBlockNumber = blockNumber;
+
+        std::unique_lock lock( m_mutex );
+        lock.lock();
+        m_highestRequestedBlockNumber = std::max( m_highestRequestedBlockNumber, blockNumber );
+        m_changed.notify_all();
+        lock.unlock();
+
+        while ( true )
+        {
+            const auto wasFinalized = m_blockOffsets.finalized();
+            auto result = m_blockOffsets.get( blockNumber );
+            if ( wasFinalized || result.has_value() ) {
+                return result;
+            }
+
+            m_blockOffsets.waitForChange();
+        }
+
+        return std::nullopt;
+    }
+
+private:
+    void
+    blockFinderMain()
+    {
+        if ( m_debugOutput ) {
+            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Boot" ).str();
+        }
+
+        std::unique_lock lock( m_mutex );
+        while ( true ) {
+            /* m_blockOffsets.size() will only grow, so we don't need to be notified when it changes! */
+            m_changed.wait( lock, [this]{ return m_cancelThread || ( m_blockOffsets.size() + m_prefetchCount >
+                                                                     m_highestRequestedBlockNumber ); } );
+            if ( m_cancelThread ) {
+                break;
+            }
+
+            /* Assuming a valid BZ2 file, the time for this find method should be bounded and
+             * responsive enough when reacting to cancelations. */
+            m_blockOffsets.push( m_bitStringFinder.find() );
+        }
+
+        m_blockOffsets.finalize();
+
+        if ( m_debugOutput ) {
+            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found" << m_blockOffsets.size() << "blocks" ).str();
+            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Shutdown" ).str();
+        }
+    }
+
+private:
+    mutable std::mutex m_mutex; /**< Only variables accessed by the asynchronous main loop need to be locked. */
+    std::condition_variable m_changed;
+
+    StreamedResults<size_t> m_blockOffsets;
+
+    size_t m_lastRequestedBlockNumber{ 0 }; /**< Only used for the usability getter "next". */
+    size_t m_highestRequestedBlockNumber{ 0 };
+
+    /**
+     * Only hardware_concurrency slows down decoding! I guess because in the worst case all decoding
+     * threads finish at the same time and now the bit string finder would need to find n new blocks
+     * in the time it takes to decode one block! In general, the higher this number, the higher the
+     * longer will be the initial CPU utilization.
+     */
+    const size_t m_prefetchCount = 3 * std::thread::hardware_concurrency();
+
+    BitStringFinder<bzip2::MAGIC_BITS_SIZE> m_bitStringFinder;
+    std::atomic<bool> m_cancelThread{ false };
+    const bool m_debugOutput = true;
+
+    JoiningThread m_blockFinder{ &BlockFinder::blockFinderMain, this };
+};
+
+
 /**
  * The idea is to use where possible the original BZ2Reader functions but extend them for parallelism.
  * Each worker thread has its own BitReader object in order to be able to access the input independently.
