@@ -14,6 +14,9 @@
 #include <vector>
 
 
+/**
+ * @todo make the BlockData more abstract. E.g., the CRC and the "isEndOfStreamBlock" blocks are very BZ2 specific.
+ */
 struct BlockData
 {
     /** The encoded offset in bits is also used as key in the BlockDatabase map and thereby somewhat redundant. */
@@ -34,10 +37,20 @@ struct BlockData
 
     uint32_t calculatedCRC = 0xFFFFFFFFL;
     uint32_t expectedCRC   = 0; /** if isEndOfStreamBlock == true, then this is the stream CRC. */
+    /**
+     * @todo imo EOS blocks shouldn't even be added to the BlockDatabase in the first place.
+     * They are useless for the BlockDatabase and only make sense for the CRC check, which is quite BZ2 specific.
+     */
     bool isEndOfStreamBlock = false;
 
     /* This future can be waited for when this block's state is PROCESSING. */
     //std::future<void> future;
+
+    /**
+     * @todo This state is bascially redundant with the set members in BlockDatabase like m_blocksBeingProcessed.
+     * Remove the redundancy! Same for the planned future above. That could be the value to a m_blocksBeingProcessed
+     * map.
+     */
 
     enum class State
     {

@@ -90,7 +90,7 @@ public:
     eof() const
     {
         if ( m_file != nullptr ) {
-            return m_buffer.empty() && std::feof( m_file );
+            return ( m_bufferBitsRead >= m_buffer.size() * CHAR_BIT ) && std::feof( m_file );
         }
         return m_buffer.empty();
     }

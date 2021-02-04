@@ -20,6 +20,7 @@
 #include <BitReader.hpp>
 #include <BitStringFinder.hpp>
 #include <BZ2Reader.hpp>
+#include <ParallelBZ2Reader.hpp>
 #include <ParallelBitStringFinder.hpp>
 
 
@@ -185,9 +186,27 @@ printHelp( const cxxopts::Options& options )
 }
 
 
+std::string
+getFilePath( cxxopts::ParseResult const& parsedArgs,
+             std::string          const& argument )
+{
+    if ( parsedArgs.count( argument ) > 0 ) {
+        auto path = parsedArgs[argument].as<std::string>();
+        if ( path != "-" ) {
+            return path;
+        }
+    }
+    return {};
+}
+
+
 int
 cli( int argc, char** argv )
 {
+    /**
+     * @note For some reason implicit values do not mix very well with positional parameters!
+     *       Parameters given to arguments with implicit values will be matched by the positional argument instead!
+     */
     cxxopts::Options options( "ibzip2",
                               "A bzip2 decompressor tool based on the indexed_bzip2 backend from ratarmount" );
     options.add_options( "Decompression" )
@@ -207,14 +226,16 @@ cli( int argc, char** argv )
 
         ( "p,block-finder-parallelism",
           "This only has an effect if the parallel decoder is used with the -P option. "
-          "If an optional integer >= 1 is given, then that is the number of threads to use for finding bzip2 blocks. ",
-          cxxopts::value<unsigned int>()->default_value( "1" )->implicit_value( "0" ) )
+          "If an optional integer >= 1 is given, then that is the number of threads to use for finding bzip2 blocks. "
+          "If 0 is given, then the parallelism will be determiend automatically.",
+          cxxopts::value<unsigned int>()->default_value( "1" ) )
 
         ( "P,decoder-parallelism",
           "Use the parallel decoder. "
           "If an optional integer >= 1 is given, then that is the number of decoder threads to use. "
-          "Note that there might be further threads being started with non-decoding work.",
-          cxxopts::value<unsigned int>()->default_value( "1" )->implicit_value( "0" ) );
+          "Note that there might be further threads being started with non-decoding work. "
+          "If 0 is given, then the parallelism will be determiend automatically.",
+          cxxopts::value<unsigned int>()->default_value( "1" ) );
 
     options.add_options( "Output" )
         ( "h,help"   , "Print this help mesage." )
@@ -223,12 +244,14 @@ cli( int argc, char** argv )
         ( "V,version", "Display software version." )
         ( "l,list-compressed-offsets",
           "List only the bzip2 block offsets given in bits one per line to the specified output file. "
-          "If no file is given, it will print to stdout or to stderr if the decoded data is already written to stdout.",
-          cxxopts::value<std::string>()->default_value( "" )->implicit_value( "" ) )
+          "If no file is given, it will print to stdout or to stderr if the decoded data is already written to stdout. "
+          "Specifying '-' as file path, will write to stdout.",
+          cxxopts::value<std::string>() )
         ( "L,list-offsets",
           "List bzip2 block offsets in bits and also the corresponding offsets in the decoded data at the beginning "
-          "of each block in bytes as a comma separated pair per line '<encoded bits>,<decoded bytes>'.",
-          cxxopts::value<std::string>()->default_value( "" )->implicit_value( "" ) );
+          "of each block in bytes as a comma separated pair per line '<encoded bits>,<decoded bytes>'. "
+          "Specifying '-' as file path, will write to stdout.",
+          cxxopts::value<std::string>() );
 
     options.add_options( "Advanced" )
         ( "buffer-size",
@@ -244,14 +267,24 @@ cli( int argc, char** argv )
 
     const auto parsedArgs = options.parse( argc, argv );
 
-    const auto force = parsedArgs["force"].as<bool>();
-    const auto quiet = parsedArgs["quiet"].as<bool>();
-    const auto test = parsedArgs["test"].as<bool>();
+    const auto force   = parsedArgs["force"  ].as<bool>();
+    const auto quiet   = parsedArgs["quiet"  ].as<bool>();
+    const auto test    = parsedArgs["test"   ].as<bool>();
     const auto verbose = parsedArgs["verbose"].as<bool>();
 
     const auto getParallelism = [] ( const auto p ) { return p > 0 ? p : std::thread::hardware_concurrency(); };
     const auto blockFinderParallelism = getParallelism( parsedArgs["block-finder-parallelism"].as<unsigned int>() );
-    //const auto decoderParallelism = getParallelism( parsedArgs["decoder-parallelism"].as<unsigned int>() );
+    const auto decoderParallelism     = getParallelism( parsedArgs["decoder-parallelism"     ].as<unsigned int>() );
+
+    if ( verbose ) {
+        for ( const auto path : { "input", "output", "list-compressed-offsets", "list-offsets" } ) {
+            std::string value = "<none>";
+            try {
+                value = parsedArgs[path].as<std::string>();
+            } catch ( ... ) {}
+            std::cerr << "file path for " << path << ": " << value << "\n";
+        }
+    }
 
     /* Check against simple commands like help and version. */
 
@@ -308,28 +341,35 @@ cli( int argc, char** argv )
 
     const auto bufferSize = parsedArgs["buffer-size"].as<unsigned int>();
 
-    if ( parsedArgs.count( "list-offsets" ) > 0 ) {
-        const auto filePath = parsedArgs["list-offsets"].as<std::string>();
-        if ( fileExists( filePath.c_str() ) && !force ) {
-            std::cerr << "Output file '" << filePath << "' for offsets already exists! Use --force to overwrite.\n";
-            return 1;
-        }
+    const auto offsetsFilePath = getFilePath( parsedArgs, "list-offsets" );
+    if ( !offsetsFilePath.empty() && fileExists( offsetsFilePath.c_str() ) && !force ) {
+        std::cerr << "Output file for offsets'" << offsetsFilePath
+                  << "' for offsets already exists! Use --force to overwrite.\n";
+        return 1;
     }
 
-    if ( parsedArgs.count( "list-compressed-offsets" ) > 0 ) {
-        const auto filePath = parsedArgs["list-compressed-offsets"].as<std::string>();
-        if ( fileExists( filePath.c_str() ) && !force ) {
-            std::cerr << "Output file '" << filePath << "' for offsets already exists! Use --force to overwrite.\n";
-            return 1;
-        }
+    const auto compressedOffsetsFilePath = getFilePath( parsedArgs, "list-compressed-offsets" );
+    if ( !compressedOffsetsFilePath.empty() && fileExists( compressedOffsetsFilePath.c_str() ) && !force ) {
+        std::cerr << "Output file compressed offsets '" << compressedOffsetsFilePath
+                  << "' for offsets already exists! Use --force to overwrite.\n";
+        return 1;
     }
 
     /* Actually do things as requested. */
 
     if ( decompress ) {
-        auto reader = inputFilePath.empty()
-                      ? std::make_unique<BZ2Reader>( STDIN_FILENO )
-                      : std::make_unique<BZ2Reader>( inputFilePath );
+        if ( verbose ) {
+            std::cerr << "Decompress\n";
+        }
+
+        auto reader = decoderParallelism == 1
+                      ? ( inputFilePath.empty()
+                          ? std::make_unique<BZ2Reader>( STDIN_FILENO )
+                          : std::make_unique<BZ2Reader>( inputFilePath ) )
+                      : ( inputFilePath.empty()
+                          ? std::make_unique<ParallelBZ2Reader>( STDIN_FILENO )
+                          : std::make_unique<ParallelBZ2Reader>( inputFilePath ) );
+
         auto outputFileDescriptor = STDOUT_FILENO;
         unique_file_ptr outputFile;
         if ( !outputFilePath.empty() ) {
@@ -402,6 +442,10 @@ cli( int argc, char** argv )
     }
 
     if ( parsedArgs.count( "list-compressed-offsets" ) > 0 ) {
+        if ( verbose ) {
+            std::cerr << "Find block offsets\n";
+        }
+
         /* If effectively only the compressed offsets are requested, then we can use the blockfinder directly! */
         findCompressedBlocks( inputFilePath,
                               parsedArgs["list-compressed-offsets"].as<std::string>(),

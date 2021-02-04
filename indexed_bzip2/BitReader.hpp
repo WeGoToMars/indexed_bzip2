@@ -23,7 +23,7 @@ class BitReader :
     public FileReader
 {
 public:
-    static constexpr size_t IOBUF_SIZE = 4096;
+    static constexpr size_t IOBUF_SIZE = 1024*1024;
     static constexpr int NO_FILE = -1;
 
 public:

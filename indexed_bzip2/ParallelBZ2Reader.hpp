@@ -77,6 +77,10 @@ public:
     }
 
 public:
+    /**
+     * Requests data chunks from the BlockDatabase using the current position until we got as much data as requested.
+     * The BlockDatabase "analyzes" these requests and prefetches and caches chunks in parallel.
+     */
     int
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
@@ -135,6 +139,7 @@ private:
     blockFinderMain()
     {
         std::cerr << ( ThreadSafeOutput() << "[Block Finder] Boot" ).str();
+        /** @todo use parallel bit string finder */
         auto bitStringFinder =
             m_bitReader.fp() == nullptr
             ? BitStringFinder<bzip2::MAGIC_BITS_SIZE>( reinterpret_cast<const char*>( m_bitReader.buffer().data() ),
@@ -171,11 +176,14 @@ private:
             m_blocks.waitUntilChanged( 0.01 );
         }
 
-        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found " << m_blocks.size() << " blocks" ).str();
-        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Finalizing..." ).str();
-        m_blocks.finalize();
-        m_blockToDataOffsets = m_blocks.blockOffsets();
-        m_blockToDataOffsetsComplete = true;
+        std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found" << m_blocks.size() << "blocks" ).str();
+
+        if ( bitStringFinder.eof() ) {
+            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Finalizing..." ).str();
+            m_blocks.finalize();
+            m_blockToDataOffsets = m_blocks.blockOffsets();
+            m_blockToDataOffsetsComplete = true;
+        }
         std::cerr << ( ThreadSafeOutput() << "[Block Finder] Shutdown" ).str();
     }
 

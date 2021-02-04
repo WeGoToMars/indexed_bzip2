@@ -15,8 +15,8 @@ int gnTests = 0;
 int gnTestErrors = 0;
 
 /**
- * head -c $(( 100*1024*1024 )) /dev/urandom > decoded-sample
- * pbzip2 -k -c decoded-sample > encoded-sample.bz2
+ * head -c $(( 64*1024*1024 )) /dev/urandom > decoded-sample
+ * lbzip2 -k -c decoded-sample > encoded-sample.bz2
  */
 const std::string encodedTestFilePath = "encoded-sample.bz2";
 const std::string decodedTestFilePath = "decoded-sample";
@@ -30,6 +30,19 @@ requireEqual( const T& a, const T& b, int line )
     if ( a != b ) {
         ++gnTestErrors;
         std::cerr << "[FAIL on line " << line << "] " << a << " != " << b << "\n";
+    }
+}
+
+
+void
+require( bool        condition,
+         std::string conditionString,
+         int         line )
+{
+    ++gnTests;
+    if ( !condition ) {
+        ++gnTestErrors;
+        std::cerr << "[FAIL on line " << line << "] " << conditionString << "\n";
     }
 }
 
@@ -50,6 +63,20 @@ toSeekdir( int origin )
 
 
 #define REQUIRE_EQUAL( a, b ) requireEqual( a, b, __LINE__ )
+#define REQUIRE( condition ) require( condition, #condition, __LINE__ )
+
+
+void
+testSimpleOpenAndClose()
+{
+    const auto t0 = std::chrono::high_resolution_clock::now();
+    {
+        ParallelBZ2Reader encodedFile( encodedTestFilePath );
+    }
+    const auto t1 = std::chrono::high_resolution_clock::now();
+    const auto dt = std::chrono::duration_cast<std::chrono::duration<double> >( t1 - t0 ).count();
+    REQUIRE( dt < 1 );
+}
 
 
 /**
@@ -77,23 +104,54 @@ testDecodingBz2ForFirstTime()
     const auto read =
         [&]( size_t nBytesToRead )
         {
+            std::cerr << "Read " << nBytesToRead << "B\n";
             std::vector<char> decodedBuffer( nBytesToRead, 111 );
-            std::vector<char> encodedBuffer( nBytesToRead, 333 );
+            std::vector<char> encodedBuffer( nBytesToRead, 222 );
+
+            /* Why doesn't the ifstream has a similar return specifying the number of read bytes?! */
             decodedFile.read( decodedBuffer.data(), nBytesToRead );
-            encodedFile.read( -1, encodedBuffer.data(), nBytesToRead );
-            REQUIRE_EQUAL( static_cast<ssize_t>( decodedFile.tellg() ), static_cast<ssize_t>( encodedFile.tell() ) );
+            const auto nBytesRead = encodedFile.read( -1, encodedBuffer.data(), nBytesToRead );
+
+            /* Encountering eof during read also sets fail bit meaning tellg will return -1! */
+            if ( !decodedFile.eof() ) {
+                REQUIRE_EQUAL( static_cast<ssize_t>( decodedFile.tellg() ),
+                               static_cast<ssize_t>( encodedFile.tell() ) );
+            }
             REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
-            REQUIRE_EQUAL( decodedBuffer, encodedBuffer );
+            /* Avoid REQUIRE_EQAL in order to avoid printing huge binary buffers out. */
+            int equalElements = 0;
+            for ( size_t i = 0; i < decodedBuffer.size(); ++i ) {
+                if ( decodedBuffer[i] == encodedBuffer[i] ) {
+                    ++equalElements;
+                }
+            }
+            REQUIRE_EQUAL( equalElements, nBytesRead );
         };
 
-    /* Try some subsequent reads over bz2 block boundaries */
+    /* Try some subsequent small reads. */
+    read( 1 );
+    read( 0 );
+    read( 1 );
+    read( 2 );
+    read( 10 );
+    read( 100 );
+    read( 256 );
 
+    /* Try some subsequent reads over bz2 block boundaries. */
+    read( 5*1024*1024 );
+    read( 7*1024*1024 );
+    read( 1024 );
+
+    /* Try reading over the end of the file. */
+    read( 1024*1024*1024 );
 }
 
 
 int
 main( void )
 {
+    testSimpleOpenAndClose();
+
     testDecodingBz2ForFirstTime();
     /* Sequential Reads on Unknown File */
 
