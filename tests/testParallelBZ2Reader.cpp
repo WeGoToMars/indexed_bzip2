@@ -72,6 +72,9 @@ testSimpleOpenAndClose()
     const auto t0 = std::chrono::high_resolution_clock::now();
     {
         ParallelBZ2Reader encodedFile( encodedTestFilePath );
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto dt = std::chrono::duration_cast<std::chrono::duration<double> >( t1 - t0 ).count();
+        REQUIRE( dt < 1 );
     }
     const auto t1 = std::chrono::high_resolution_clock::now();
     const auto dt = std::chrono::duration_cast<std::chrono::duration<double> >( t1 - t0 ).count();
@@ -96,6 +99,7 @@ testDecodingBz2ForFirstTime()
             decodedFile.seekg( offset, toSeekdir( origin ) );
             const auto newSeekPosDecoded = static_cast<ssize_t>( decodedFile.tellg() );
             const auto newSeekPosEncoded = static_cast<ssize_t>( encodedFile.seek( offset, origin ) );
+
             REQUIRE_EQUAL( newSeekPosDecoded, newSeekPosEncoded );
             REQUIRE_EQUAL( static_cast<ssize_t>( decodedFile.tellg() ), static_cast<ssize_t>( encodedFile.tell() ) );
             REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
@@ -118,7 +122,8 @@ testDecodingBz2ForFirstTime()
                                static_cast<ssize_t>( encodedFile.tell() ) );
             }
             REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
-            /* Avoid REQUIRE_EQAL in order to avoid printing huge binary buffers out. */
+
+            /* Avoid REQUIRE_EQUAL in order to avoid printing huge binary buffers out. */
             int equalElements = 0;
             for ( size_t i = 0; i < decodedBuffer.size(); ++i ) {
                 if ( decodedBuffer[i] == encodedBuffer[i] ) {
@@ -144,6 +149,46 @@ testDecodingBz2ForFirstTime()
 
     /* Try reading over the end of the file. */
     read( 1024*1024*1024 );
+
+    /* Try out seeking. */
+    seek( 0 );
+    seek( 1 );
+    seek( 2 );
+    seek( 2 );
+    seek( 4 );
+    seek( 256 );
+    seek( 3*1024*1024 );
+
+    /* Seek after end of file */
+    seek( 1024*1024*1024 );
+
+    /* Seek back and forth */
+    seek( 10'000 );
+    seek( 50'000 );
+    seek( 10'000 );
+    seek( 40'000 );
+
+    /* Seek and read */
+    seek( 0 );
+    read( 1 );
+
+    seek( 1 );
+    read( 1 );
+
+    seek( 2 );
+    read( 2 );
+
+    seek( 256 );
+    read( 2 );
+
+    seek( 256 );
+    read( 1024 );
+
+    seek( 2*1024*1024 + 432 );
+    read( 12345 );
+
+    seek( 1*1024*1024 - 432 );
+    read( 432 );
 }
 
 
