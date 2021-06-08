@@ -494,13 +494,21 @@ private:
  * push all block information to the BlockMapBuilder. And because ParallelBZ2Reader should not be called from
  * differen threads, there should never be a case that lookups to this function should have to wait for
  * other threads to push data into us!
- * This is used by the docer threads, so it must be thread-safe!
+ * This is used by the worker threads, so it must be thread-safe!
  */
 class BlockMap
 {
 public:
     struct BlockInfo
     {
+    public:
+        [[nodiscard]] bool
+        contains( size_t dataOffset ) const
+        {
+            return ( decodedOffsetInBytes <= dataOffset ) && ( dataOffset < decodedOffsetInBytes + decodedSizeInBytes );
+        }
+
+    public:
         /**< each BZ2 block in the stream will be given an increasing index number. */
         size_t blockIndex{ 0 };
         size_t encodedOffsetInBits{ 0 };
@@ -510,12 +518,10 @@ public:
 
 public:
     /** BlockFinder is used to determine which blocks exist and which are still missing! */
-    BlockMap( std::shared_ptr<BlockFinder> blockFinder,
-              std::map<size_t, size_t>* blockToDataOffsets ) :
-        m_blockFinder( std::move( blockFinder ) ),
+    BlockMap( std::map<size_t, size_t>* blockToDataOffsets ) :
         m_blockToDataOffsets( blockToDataOffsets )
     {
-        if ( !m_blockFinder || ( m_blockToDataOffsets == nullptr ) ) {
+        if ( m_blockToDataOffsets == nullptr ) {
             throw std::invalid_argument( "May not give invalid pointers as arguments!" );
         }
     }
@@ -525,8 +531,16 @@ public:
     insert( size_t blockOffset,
             size_t size )
     {
+        std::scoped_lock lock( m_mutex );
+
+        if ( m_blockToDataOffsets->empty() ) {
+            m_blockToDataOffsets->emplace( blockOffset, 0 );
+            m_lastBlockSize = size;
+            return;
+        }
+
         /* If successive value, then simply append */
-        if ( m_blockToDataOffsets->empty() || ( blockOffset > m_blockToDataOffsets->rbegin()->first ) ) {
+        if ( blockOffset > m_blockToDataOffsets->rbegin()->first ) {
             m_blockToDataOffsets->emplace( blockOffset, m_blockToDataOffsets->rbegin()->second + m_lastBlockSize );
             m_lastBlockSize = size;
             return;
@@ -560,6 +574,8 @@ public:
     [[nodiscard]] BlockInfo
     find( size_t dataOffset ) const
     {
+        std::scoped_lock lock( m_mutex );
+
         BlockInfo result;
 
         /* find offset from map (key and values should sorted, so we can bisect!) */
@@ -579,7 +595,7 @@ public:
 
         result.encodedOffsetInBits = blockOffset->first;
         result.decodedOffsetInBytes = blockOffset->second;
-        /* O(n) */
+        /** @todo O(n) */
         result.blockIndex = m_blockToDataOffsets->size() - std::distance( blockOffset, m_blockToDataOffsets->rend() );
 
         if ( blockOffset != m_blockToDataOffsets->rbegin() ) {
@@ -597,23 +613,18 @@ public:
     [[nodiscard]] size_t
     size() const
     {
+        std::scoped_lock lock( m_mutex );
         return m_blockToDataOffsets->size();
     }
 
-
-    [[nodiscard]] bool
-    finalized() const
-    {
-        return m_blockFinder->finalized() && ( m_blockFinder->size() == m_blockToDataOffsets->size() );
-    }
-
 private:
-    std::shared_ptr<BlockFinder> const m_blockFinder;
     /** If complete, the last block will be of size 0 and indicate the end of stream! */
     std::map<size_t, size_t>* const m_blockToDataOffsets;
 
     size_t m_lastBlockSize{ 0 }; /**< Block size of m_blockToDataOffsets.rbegin() */
     size_t m_highestDataOffset{ 0 }; /**< used only for sanity check. */
+
+    mutable std::mutex m_mutex;
 };
 
 
@@ -658,12 +669,16 @@ public:
      * Fetches, prefetches, caches, and returns result.
      */
     [[nodiscard]] std::shared_ptr<BlockData>
-    get( size_t blockOffset )
+    get( size_t blockOffset,
+         size_t blockIndex = std::numeric_limits<size_t>::max() )
     {
-        const auto blockInfo = m_blockMap->find( blockOffset );
-        if ( ( blockOffset < blockInfo.decodedOffsetInBytes )
-             || ( blockOffset >= blockInfo.decodedOffsetInBytes + blockInfo.decodedSizeInBytes ) ) {
-            throw std::logic_error( "Block offset should always first be moved into block map before being fetched!" );
+        if ( blockIndex == std::numeric_limits<size_t>::max() ) {
+            const auto blockInfo = m_blockMap->find( blockOffset );
+            if ( !blockInfo.contains( blockOffset ) ) {
+                throw std::logic_error( "Block offset should always first be moved into "
+                                        "block map before being fetched!" );
+            }
+            blockIndex = blockInfo.blockIndex;
         }
 
         /* First, access cache before data might get evicted! (May return std::nullopt) */
@@ -690,7 +705,7 @@ public:
 
         /* Check for ready prefetches, move to cache, and replace with other uncached prefetches. */
 
-        m_fetchingStrategy.fetch( blockInfo.blockIndex );
+        m_fetchingStrategy.fetch( blockIndex );
         auto toPrefetch = m_fetchingStrategy.prefetch();
         toPrefetch.erase( std::remove_if( toPrefetch.begin(), toPrefetch.end(),
                                           [this] ( const auto& offset ) { return m_cache.get( offset ).has_value(); } ),
@@ -939,16 +954,17 @@ public:
             std::shared_ptr<BlockFetcher::BlockData> blockData;
 
             const auto blockInfo = m_blockMap->find( m_currentPosition );
-            if ( blockInfo.decodedOffsetInBytes + blockInfo.decodedSizeInBytes < m_currentPosition ) {
+            if ( !blockInfo.contains( m_currentPosition ) ) {
                 /* Fetch new block for the first time and add information to block map. */
-                const auto encodedOffsetInBits = m_blockFinder->get( m_blockMap->size() );
+                const auto blockIndex = m_blockMap->size();
+                const auto encodedOffsetInBits = m_blockFinder->get( blockIndex );
                 if ( !encodedOffsetInBits ) {
                     std::cerr << "EOF reached 2\n";
                     m_atEndOfFile = true;
                     break;
                 }
 
-                blockData = m_blockFetcher->get( *encodedOffsetInBits );
+                blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
                 m_blockMap->insert( *encodedOffsetInBits, blockData->data.size() );
 
                 if ( blockData->data.empty() ) {
@@ -1080,6 +1096,6 @@ private:
     /** Necessary for prefetching decoded blocks in parallel. */
     const unsigned int m_parallelism{ std::thread::hardware_concurrency() };
     const std::shared_ptr<BlockFinder> m_blockFinder;
-    const std::shared_ptr<BlockMap> m_blockMap{ std::make_unique<BlockMap>( m_blockFinder, &m_blockToDataOffsets ) };
+    const std::shared_ptr<BlockMap> m_blockMap{ std::make_unique<BlockMap>( &m_blockToDataOffsets ) };
     std::unique_ptr<BlockFetcher> m_blockFetcher;
 };
