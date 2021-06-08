@@ -209,6 +209,7 @@ private:
     BlockHeader
     readBlockHeader( size_t bitsOffset );
 
+protected:
     void
     readBzip2Header();
 
