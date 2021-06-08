@@ -38,8 +38,9 @@ public:
 
 public:
     explicit
-    BitReader( const std::string& filePath ) :
-        m_file( fopen( filePath.c_str(), "rb" ) ),
+    BitReader( std::string filePath ) :
+        m_filePath( std::move( filePath ) ),
+        m_file( fopen( m_filePath.c_str(), "rb" ) ),
         m_seekable( determineSeekable( ::fileno( m_file ) ) ),
         m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
     {
@@ -48,6 +49,7 @@ public:
 
     explicit
     BitReader( int fileDescriptor ) :
+        m_fileDescriptor( fileDescriptor ),
         m_file( fopen( fdFilePath( fileDescriptor ).c_str(), "rb" ) ),
         m_seekable( determineSeekable( ::fileno( m_file ) ) ),
         m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
@@ -83,11 +85,23 @@ public:
      * Copy constructor opens a new independent file descriptor and pointer.
      */
     BitReader( const BitReader& other ) :
-        m_file( other.m_file == nullptr ? nullptr : fopen( fdFilePath( ::fileno( other.m_file ) ).c_str(), "rb" ) ),
+        m_filePath( other.m_filePath ),
+        m_fileDescriptor( other.m_fileDescriptor ),
         m_seekable( other.m_seekable ),
         m_fileSizeBytes( other.m_fileSizeBytes ),
-        m_offsetBits( other.m_offsetBits )
+        m_offsetBits( other.m_offsetBits ),
+        m_inbuf( other.m_inbuf )
     {
+        if ( other.m_file == nullptr ) {
+            m_file = nullptr;
+        } else if ( !other.m_filePath.empty() ) {
+            m_file = fopen( other.m_filePath.c_str(), "rb" );
+        } else if ( other.m_fileDescriptor != -1 ) {
+            m_file = fopen( fdFilePath( other.m_fileDescriptor ).c_str(), "rb" );
+        } else {
+            m_file = fopen( fdFilePath( ::fileno( other.m_file ) ).c_str(), "rb" );
+        }
+
         init();
     }
 
@@ -249,7 +263,7 @@ private:
     void
     init()
     {
-        if ( m_seekable ) {
+        if ( m_seekable && ( fp() != nullptr ) ) {
             fseek( fp(), 0, SEEK_SET );
         }
     }
@@ -299,6 +313,9 @@ private:
     }
 
 private:
+    std::string m_filePath;  /**< only used for copy constructor */
+    int m_fileDescriptor = -1;  /**< only used for copy constructor */
+
     FILE*         m_file = nullptr;
     bool    const m_seekable;
     size_t  const m_fileSizeBytes;
