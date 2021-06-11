@@ -79,7 +79,21 @@ public:
         seek( 0, SEEK_SET ); /* seeks to m_offsetBits under the hood */
     }
 
-    BitReader( BitReader&& ) = default;
+    BitReader( BitReader&& other ) :
+        m_filePath( other.m_filePath ),
+        m_fileDescriptor( other.m_fileDescriptor ),
+        m_file( other.m_file ),
+        m_seekable( other.m_seekable ),
+        m_fileSizeBytes( other.m_fileSizeBytes ),
+        m_offsetBits( other.m_offsetBits ),
+        m_inbuf( other.m_inbuf ),
+        m_inbufPos( other.m_inbufPos ),
+        m_lastReadSuccessful( other.m_lastReadSuccessful )
+    {
+        /* This is the whole reason why this move constructor can't use the default implementation!
+         * Without this, 'other' would close the file pointer which we copied to us in its destructor! */
+        other.m_file = nullptr;
+    }
 
     /**
      * Copy constructor opens a new independent file descriptor and pointer.
