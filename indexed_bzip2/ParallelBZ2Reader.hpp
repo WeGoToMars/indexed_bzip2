@@ -598,7 +598,9 @@ public:
         /** @todo O(n) */
         result.blockIndex = m_blockToDataOffsets->size() - std::distance( blockOffset, m_blockToDataOffsets->rend() );
 
-        if ( blockOffset != m_blockToDataOffsets->rbegin() ) {
+        if ( blockOffset == m_blockToDataOffsets->rbegin() ) {
+            result.decodedSizeInBytes = m_lastBlockSize;
+        } else {
             const auto higherBlock = std::prev( /* reverse! */ blockOffset );
             if ( higherBlock->second < blockOffset->second ) {
                 std::logic_error( "Data offsets are not monotonically increasing!" );
@@ -635,7 +637,7 @@ class BlockFetcher
 public:
     struct BlockData
     {
-        size_t offsetBitsEncoded  = std::numeric_limits<size_t>::max();
+        size_t offsetBitsEncoded = std::numeric_limits<size_t>::max();
         size_t encodedBitsCount  = 0;
 
         std::vector<uint8_t> data;
@@ -655,7 +657,7 @@ public:
         m_bitReader( std::move( bitReader ) ),
         m_blockMap( std::move( blockMap ) ),
         m_blockSize100k( blockSize100k ),
-        m_cache( 3 * m_threadPool.size() ),
+        m_threadPool( 1 /* parallelism == 0 ? std::thread::hardware_concurrency() : parallelism */ )
         m_threadPool( parallelism == 0 ? std::thread::hardware_concurrency() : parallelism )
     {}
 
@@ -672,6 +674,19 @@ public:
     get( size_t blockOffset,
          size_t blockIndex = std::numeric_limits<size_t>::max() )
     {
+        /* First, access cache before data might get evicted! (May return std::nullopt) */
+        auto result = m_cache.get( blockOffset );
+
+#if 1
+        if ( result ) {
+            return *result;
+        }
+
+        result = std::make_shared<BlockData>( decodeBlock( blockOffset ) );
+        m_cache.insert( blockOffset, *result );
+        return *result;
+#endif
+
         if ( blockIndex == std::numeric_limits<size_t>::max() ) {
             const auto blockInfo = m_blockMap->find( blockOffset );
             if ( !blockInfo.contains( blockOffset ) ) {
@@ -681,8 +696,6 @@ public:
             blockIndex = blockInfo.blockIndex;
         }
 
-        /* First, access cache before data might get evicted! (May return std::nullopt) */
-        auto result = m_cache.get( blockOffset );
 
         /* Check whether the desired offset is prefetched. */
         std::future<BlockData> resultFuture;
@@ -967,22 +980,22 @@ public:
                 blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
                 m_blockMap->insert( *encodedOffsetInBits, blockData->data.size() );
 
-                if ( blockData->data.empty() ) {
-                    std::cerr << "Encountered empty block. Might happen for EOS blocks.";
-                    /* Note that this can be removed because writeResult would be called with 0 anyway. */
-                    continue;
-                }
-            } else {
-                blockData = m_blockFetcher->get( blockInfo.encodedOffsetInBits );
-                if ( blockData->data.empty() ) {
-                    throw std::logic_error( "Block is empty even though it shouldn't be according to block map!" );
-                }
+                continue;
             }
 
-            const auto nBytesToDecode = std::min( blockData->data.size(), nBytesToRead - nBytesDecoded );
+            const auto offsetInBlock = m_currentPosition - blockInfo.decodedOffsetInBytes;
+            blockData = m_blockFetcher->get( blockInfo.encodedOffsetInBits );
+
+            if ( offsetInBlock >= blockData->data.size() ) {
+                throw std::logic_error( "Block does not contain the requested offset even though it "
+                                        "shouldn't be according to block map!" );
+            }
+
+            const auto nBytesToDecode = std::min( blockData->data.size() - offsetInBlock,
+                                                  nBytesToRead - nBytesDecoded );
             nBytesDecoded += writeResult( outputFileDescriptor,
                                           outputBuffer == nullptr ? nullptr : outputBuffer + nBytesDecoded,
-                                          reinterpret_cast<const char*>( blockData->data.data() ),
+                                          reinterpret_cast<const char*>( blockData->data.data() + offsetInBlock ),
                                           nBytesToDecode );
             m_currentPosition += nBytesToDecode;
         }

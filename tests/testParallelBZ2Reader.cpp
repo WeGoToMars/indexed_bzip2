@@ -109,8 +109,11 @@ testDecodingBz2ForFirstTime()
         [&]( size_t nBytesToRead )
         {
             std::cerr << "Read " << nBytesToRead << "B\n";
+
             std::vector<char> decodedBuffer( nBytesToRead, 111 );
             std::vector<char> encodedBuffer( nBytesToRead, 222 );
+
+            REQUIRE_EQUAL( decodedBuffer.size(), encodedBuffer.size() );
 
             /* Why doesn't the ifstream has a similar return specifying the number of read bytes?! */
             decodedFile.read( decodedBuffer.data(), nBytesToRead );
