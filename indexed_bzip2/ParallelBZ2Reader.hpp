@@ -578,12 +578,27 @@ public:
     }
 
 
+    [[nodiscard]] size_t
+    getBlockIndex( size_t encodedOffsetInBits ) const
+    {
+        std::scoped_lock lock( m_mutex );
+
+        const auto match = m_blockToDataOffsets->find( encodedOffsetInBits );
+        if ( match == m_blockToDataOffsets->end() ) {
+            throw std::out_of_range( "No block with the specified offset exists in the block map!" );
+        }
+
+        /** @todo this makes it linear because std::map::iterator is not a random access iterator! */
+        return std::distance( m_blockToDataOffsets->begin(), match );
+    }
+
+
     /**
      * Returns the block containing the given data offset. May return a block which does not contain the given
      * offset. In that case it will be the last block.
      */
     [[nodiscard]] BlockInfo
-    find( size_t dataOffset ) const
+    findDataOffset( size_t dataOffset ) const
     {
         std::scoped_lock lock( m_mutex );
 
@@ -707,12 +722,7 @@ public:
 #endif
 
         if ( blockIndex == std::numeric_limits<size_t>::max() ) {
-            const auto blockInfo = m_blockMap->find( blockOffset );
-            if ( !blockInfo.contains( blockOffset ) ) {
-                throw std::logic_error( "Block offset should always first be moved into "
-                                        "block map before being fetched!" );
-            }
-            blockIndex = blockInfo.blockIndex;
+            blockIndex = m_blockMap->getBlockIndex( blockOffset );
         }
 
 
@@ -985,7 +995,7 @@ public:
         while ( ( nBytesDecoded < nBytesToRead ) && !eof() ) {
             std::shared_ptr<BlockFetcher::BlockData> blockData;
 
-            const auto blockInfo = m_blockMap->find( m_currentPosition );
+            const auto blockInfo = m_blockMap->findDataOffset( m_currentPosition );
             if ( !blockInfo.contains( m_currentPosition ) ) {
                 /* Fetch new block for the first time and add information to block map. */
                 const auto blockIndex = m_blockMap->blockCount();
@@ -1073,7 +1083,7 @@ public:
 
         /* m_blockMap is only accessed by read and seek, which are not to be called from different threads,
          * so we do not have to lock it. */
-        const auto blockInfo = m_blockMap->find( offset );
+        const auto blockInfo = m_blockMap->findDataOffset( offset );
         if ( static_cast<size_t>( offset ) < blockInfo.decodedOffsetInBytes ) {
             throw std::logic_error( "Block map returned unwanted block!" );
         }
