@@ -808,7 +808,7 @@ public:
     {
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
-        bzip2::Block block( bitReader );
+        bzip2::Block block( std::move( bitReader ) );
 
         BlockHeaderData result;
         result.encodedOffsetInBits = blockOffset;
@@ -818,7 +818,7 @@ public:
 
         if ( block.eos() ) {
             std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
-            result.encodedSizeInBits = bitReader.tell() - blockOffset;
+            result.encodedSizeInBits = block.encodedSizeInBits;
         }
 
         return result;
@@ -829,7 +829,7 @@ public:
     {
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
-        bzip2::Block block( bitReader );
+        bzip2::Block block( std::move( bitReader ) );
 
         BlockData result;
         result.encodedOffsetInBits = blockOffset;
@@ -839,7 +839,7 @@ public:
 
         if ( block.eos() ) {
             std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
-            result.encodedSizeInBits = bitReader.tell() - blockOffset;
+            result.encodedSizeInBits = block.encodedSizeInBits;
             return result;
         }
 
@@ -864,7 +864,7 @@ public:
         while ( block.bwdata.writeCount > 0 );
 
         result.data.resize( decodedDataSize );
-        result.encodedSizeInBits = bitReader.tell() - blockOffset;
+        result.encodedSizeInBits = block.encodedSizeInBits;
         result.calculatedCRC = block.bwdata.dataCRC;
 
         return result;

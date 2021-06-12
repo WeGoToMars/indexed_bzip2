@@ -10,6 +10,7 @@
 #include <cassert>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -85,8 +86,8 @@ public:
     Block& operator=( Block&& ) = default;
 
     explicit
-    Block( BitReader& bitReader ) :
-        mp_bitReader( &bitReader )
+    Block( BitReader bitReader ) :
+        m_bitReader( std::make_unique<BitReader>( std::move( bitReader ) ) )
     {
         readBlockHeader();
     }
@@ -116,8 +117,10 @@ public:
     BitReader&
     bitReader()
     {
-        assert( mp_bitReader != nullptr );
-        return *mp_bitReader;
+        if ( m_bitReader ) {
+            return *m_bitReader;
+        }
+        throw std::invalid_argument( "Block has not been initialized yet!" );
     }
 
 private:
@@ -203,7 +206,11 @@ public:
     /* Second pass decompression data (burrows-wheeler transform) */
     BurrowsWheelerTransformData bwdata;
 
-    BitReader* mp_bitReader = nullptr;
+    size_t encodedOffsetInBits = 0;
+    size_t encodedSizeInBits = 0;
+
+private:
+    std::unique_ptr<BitReader> m_bitReader;
     bool m_atEndOfStream = false;
     bool m_atEndOfFile = false;
 };
@@ -227,6 +234,9 @@ public:
 inline void
 Block::readBlockHeader()
 {
+    encodedOffsetInBits = bitReader().tell();
+    encodedSizeInBits = 0;
+
     magicBytes = ( (uint64_t)getBits<24>() << 24 ) | (uint64_t)getBits<24>();
     bwdata.headerCRC = getBits( 32 );
     m_atEndOfStream = magicBytes == MAGIC_BITS_EOS;
@@ -577,6 +587,8 @@ Block::readBlockData()
     }
 
     bwdata.prepare();
+
+    encodedSizeInBits = bitReader().tell() - encodedOffsetInBits;
 }
 
 
