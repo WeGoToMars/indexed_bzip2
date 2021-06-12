@@ -536,27 +536,30 @@ public:
 
 
     void
-    insert( size_t blockOffset,
-            size_t size )
+    insert( size_t encodedBlockOffset,
+            size_t encodedSize,
+            size_t decodedSize )
     {
         std::scoped_lock lock( m_mutex );
 
+        std::optional<size_t> decodedOffset;
         if ( m_blockToDataOffsets->empty() ) {
-            m_blockToDataOffsets->emplace( blockOffset, 0 );
-            m_lastBlockSize = size;
-            return;
+            decodedOffset = 0;
+        } else if ( encodedBlockOffset > m_blockToDataOffsets->rbegin()->first ) {
+            decodedOffset = m_blockToDataOffsets->rbegin()->second + m_lastBlockDecodedSize;
         }
 
-        /* If successive value, then simply append */
-        if ( blockOffset > m_blockToDataOffsets->rbegin()->first ) {
-            m_blockToDataOffsets->emplace( blockOffset, m_blockToDataOffsets->rbegin()->second + m_lastBlockSize );
-            m_lastBlockSize = size;
+        /* If successive value or empty, then simply append */
+        if ( decodedOffset ) {
+            m_blockToDataOffsets->emplace( encodedBlockOffset, *decodedOffset );
+            m_lastBlockDecodedSize = decodedSize;
+            m_lastBlockEncodedSize = encodedSize;
             return;
         }
 
         /* Generally, block inserted offsets should always be increasing!
          * But do ignore duplicates after confirming that there is no data inconsistency. */
-        const auto match = m_blockToDataOffsets->find( blockOffset );
+        const auto match = m_blockToDataOffsets->find( encodedBlockOffset );
 
         if ( match == m_blockToDataOffsets->end() ) {
             throw std::invalid_argument( "Inserted block offsets should be strictly increasing!" );
@@ -567,7 +570,7 @@ public:
         }
 
         const auto impliedDecodedSize = std::next( match )->second - match->second;
-        if ( impliedDecodedSize != size ) {
+        if ( impliedDecodedSize != decodedSize ) {
             throw std::invalid_argument( "Got duplicate block offset with inconsistent size!" );
         }
 
@@ -604,16 +607,18 @@ public:
         result.encodedOffsetInBits = blockOffset->first;
         result.decodedOffsetInBytes = blockOffset->second;
         /** @todo O(n) */
-        result.blockIndex = m_blockToDataOffsets->size() - std::distance( blockOffset, m_blockToDataOffsets->rend() );
+        result.blockIndex = std::distance( blockOffset, m_blockToDataOffsets->rend() ) - 1;
 
         if ( blockOffset == m_blockToDataOffsets->rbegin() ) {
-            result.decodedSizeInBytes = m_lastBlockSize;
+            result.decodedSizeInBytes = m_lastBlockDecodedSize;
+            result.encodedSizeInBits = m_lastBlockEncodedSize;
         } else {
             const auto higherBlock = std::prev( /* reverse! */ blockOffset );
             if ( higherBlock->second < blockOffset->second ) {
                 std::logic_error( "Data offsets are not monotonically increasing!" );
             }
             result.decodedSizeInBytes = higherBlock->second - blockOffset->second;
+            result.encodedSizeInBits = higherBlock->first - blockOffset->first;
         }
 
         return result;
@@ -631,7 +636,9 @@ private:
     /** If complete, the last block will be of size 0 and indicate the end of stream! */
     std::map<size_t, size_t>* const m_blockToDataOffsets;
 
-    size_t m_lastBlockSize{ 0 }; /**< Block size of m_blockToDataOffsets.rbegin() */
+    size_t m_lastBlockEncodedSize{ 0 }; /**< Encoded block size of m_blockToDataOffsets.rbegin() */
+    size_t m_lastBlockDecodedSize{ 0 }; /**< Decoded block size of m_blockToDataOffsets.rbegin() */
+
     size_t m_highestDataOffset{ 0 }; /**< used only for sanity check. */
 
     mutable std::mutex m_mutex;
@@ -1008,9 +1015,9 @@ public:
                     break;
                 }
 
-                blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
-                m_blockMap->insert( *encodedOffsetInBits, blockData->data.size() );
 
+                blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
+                m_blockMap->insert( blockData->encodedOffsetInBits, blockData->encodedSizeInBits, blockData->data.size() );
                 continue;
             }
 
