@@ -247,8 +247,8 @@ Block::readBlockHeader()
             bitReader().read( 8 - nBitsInByte );
         }
 
+        encodedSizeInBits = bitReader().tell() - encodedOffsetInBits;
         m_atEndOfFile = bitReader().eof();
-
         return;
     }
 

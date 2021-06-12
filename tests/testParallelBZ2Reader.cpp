@@ -125,7 +125,12 @@ testDecodingBz2ForFirstTime()
             REQUIRE_EQUAL( std::min<ssize_t>( newSeekPosDecoded, decodedFileSize ), newSeekPosEncoded );
             REQUIRE_EQUAL( std::min<ssize_t>( decodedFile.tellg(), decodedFileSize ),
                            static_cast<ssize_t>( encodedFile.tell() ) );
-            REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
+
+            /* Beware! eof behavior is different. std:ifstream requires to read more than the file contents
+             * for EOF to be reached while BZ2Reader only required to read more than >or equal< the file
+             * size of bytes. Furthermore, seeking beyond the file does not set EOF in std::ifstream but does
+             * set EOF in BZ2Reader! */
+            //REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
         };
 
     const auto read =

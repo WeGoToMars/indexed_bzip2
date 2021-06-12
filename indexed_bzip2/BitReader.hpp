@@ -102,6 +102,7 @@ public:
         other.m_file = nullptr;
     }
 
+#if 0
     BitReader&
     operator=( BitReader&& other )
     {
@@ -129,6 +130,10 @@ public:
         *this = BitReader( other );
         return *this;
     }
+#else
+    BitReader& operator=( BitReader&& other ) = delete;
+    BitReader& operator=( const BitReader& other ) = delete;
+#endif
 
     /**
      * Copy constructor. As far as I know, there is no stable way to open a completely new independent

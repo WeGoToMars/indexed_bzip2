@@ -868,24 +868,6 @@ public:
         result.calculatedCRC = block.bwdata.dataCRC;
 
         return result;
-
-#if 0
-        /* Check whether the next block is an EOS block, which has a different magic byte string
-         * and therefore will not be found by the block finder! Such a block will span 48 + 32 + (0..7) bits.
-         * However, the last 0 to 7 bits are only padding and not needed! */
-        if ( !bitReader.eof() ) {
-            const auto eosBlockOffset = bitReader.tell();
-            std::vector<uint8_t> buffer( ( bzip2::MAGIC_BITS_SIZE + 32 ) / CHAR_BIT );
-            bitReader.read( reinterpret_cast<char*>( buffer.data() ), buffer.size() );
-            uint64_t bits = 0;
-            for ( int i = 0; i < bzip2::MAGIC_BITS_SIZE / CHAR_BIT; ++i ) {
-                bits = ( bits << CHAR_BIT ) | static_cast<uint64_t>( buffer[i] );
-            }
-            if ( bits == bzip2::MAGIC_BITS_EOS ) {
-                m_blocks.insertBlock( eosBlockOffset, std::move( buffer ) );
-            }
-        }
-#endif
     }
 
 private:
@@ -1018,6 +1000,20 @@ public:
 
                 blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
                 m_blockMap->insert( blockData->encodedOffsetInBits, blockData->encodedSizeInBits, blockData->data.size() );
+
+                /** @todo Try to read next block here in order to insert EOS blocks, which the block finder ignores! */
+                /* Check whether the next block is an EOS block, which has a different magic byte string
+                 * and therefore will not be found by the block finder! Such a block will span 48 + 32 + (0..7) bits.
+                 * However, the last 0 to 7 bits are only padding and not needed! */
+                if ( !blockData->isEndOfFile ) {
+                    const auto nextBlockHeaderData = m_blockFetcher->readBlockHeader( blockData->encodedOffsetInBits +
+                                                                                      blockData->encodedSizeInBits );
+                    if ( nextBlockHeaderData.isEndOfStreamBlock ) {
+                        m_blockMap->insert( nextBlockHeaderData.encodedOffsetInBits,
+                                            nextBlockHeaderData.encodedSizeInBits,
+                                            0 );
+                    }
+                }
                 continue;
             }
 
