@@ -72,6 +72,37 @@ template<typename Value>
 class StreamedResults
 {
 public:
+    /**
+     * std::vector would work as well but the reallocations during appending might slow things down.
+     * For the index access operations, a container with random access iterator, would yield better performance.
+     */
+    using Values = std::deque<Value>;
+
+    class ResultsView
+    {
+    public:
+        ResultsView( const Values* results,
+                     std::mutex*   mutex ) :
+            m_results( results ),
+            m_lock( *mutex )
+        {
+            if ( m_results == nullptr ) {
+                throw std::invalid_argument( "Arguments may not be nullptr!" );
+            }
+        }
+
+        [[nodiscard]] const Values&
+        results() const
+        {
+            return *m_results;
+        }
+
+    private:
+        Values const * const m_results;
+        std::scoped_lock<std::mutex> const m_lock;
+    };
+
+public:
     [[nodiscard]] size_t
     size() const
     {
@@ -93,14 +124,26 @@ public:
     }
 
     /**
-     * @return the result at the requested position. Will only return
+     * @return the result at the requested position. Per default, will only return
      *         if the result is available or if the class is finalized.
      */
     [[nodiscard]] std::optional<Value>
-    get( size_t position ) const
+    get( size_t position,
+         double timeoutInSeconds = std::numeric_limits<double>::infinity() ) const
     {
         std::unique_lock lock( m_mutex );
-        m_changed.wait( lock, [&] () { return m_finalized || ( position < m_results.size() ); } );
+
+        if ( timeoutInSeconds > 0 ) {
+            const auto predicate = [&] () { return m_finalized || ( position < m_results.size() ); };
+
+            if ( std::isfinite( timeoutInSeconds ) ) {
+                const auto timeout = std::chrono::nanoseconds( static_cast<size_t>( timeoutInSeconds * 1e9 ) );
+                m_changed.wait_for( lock, timeout, predicate );
+            } else {
+                m_changed.wait( lock, predicate );
+            }
+        }
+
         if ( position < m_results.size() ) {
             return m_results[position];
         }
@@ -129,11 +172,20 @@ public:
         return m_finalized;
     }
 
+
+    /** @return a view to the results, which also locks access to it using RAII. */
+    [[nodiscard]] ResultsView
+    results() const
+    {
+        return ResultsView( &m_results, &m_mutex );
+    }
+
+
 private:
     mutable std::mutex m_mutex;
     mutable std::condition_variable m_changed;
 
-    std::deque<Value> m_results;
+    Values m_results;
     std::atomic<bool> m_finalized = false;
 };
 
@@ -170,6 +222,7 @@ public:
         m_changed.notify_all();
     }
 
+public:
     [[nodiscard]] size_t
     size() const
     {
@@ -183,13 +236,13 @@ public:
     }
 
     /**
-     * In contrast to StreamedResults::operator[], this call will track the requested block so that the
-     * finder loop will look up to that block.
-     * Therefore, either a result can be returned or if not it means we are finalized and the requested block
-     * is out of range!
+     * This call will track the requested block so that the finder loop will look up to that block.
+     * Per default, with the infinite timeout, either a result can be returned or if not it means
+     * we are finalized and the requested block is out of range!
      */
     [[nodiscard]] std::optional<size_t>
-    get( size_t blockNumber )
+    get( size_t blockNumber,
+         double timeoutInSeconds = std::numeric_limits<double>::infinity() )
     {
         {
             std::scoped_lock lock( m_mutex );
@@ -197,7 +250,26 @@ public:
             m_changed.notify_all();
         }
 
-        return m_blockOffsets.get( blockNumber );
+        return m_blockOffsets.get( blockNumber, timeoutInSeconds );
+    }
+
+    /** @return Index for the block at the requested offset. */
+    [[nodiscard]] size_t
+    find( size_t encodedBlockOffsetInBits ) const
+    {
+        std::scoped_lock lock( m_mutex );
+
+        /* m_blockOffsets is effectively double-locked but that's the price of abstraction. */
+        const auto lockedOffsets = m_blockOffsets.results();
+        const auto& blockOffsets = lockedOffsets.results();
+
+        /* Find in sorted vector by bisection. */
+        const auto match = std::lower_bound( blockOffsets.begin(), blockOffsets.end(), encodedBlockOffsetInBits );
+        if ( ( match == blockOffsets.end() ) || ( *match != encodedBlockOffsetInBits ) ) {
+            throw std::out_of_range( "No block with the specified offset exists in the block map!" );
+        }
+
+        return std::distance( blockOffsets.begin(), match );
     }
 
 private:
@@ -577,22 +649,6 @@ public:
         /* Quietly ignore duplicate insertions. */
     }
 
-
-    [[nodiscard]] size_t
-    getBlockIndex( size_t encodedOffsetInBits ) const
-    {
-        std::scoped_lock lock( m_mutex );
-
-        const auto match = m_blockToDataOffsets->find( encodedOffsetInBits );
-        if ( match == m_blockToDataOffsets->end() ) {
-            throw std::out_of_range( "No block with the specified offset exists in the block map!" );
-        }
-
-        /** @todo this makes it linear because std::map::iterator is not a random access iterator! */
-        return std::distance( m_blockToDataOffsets->begin(), match );
-    }
-
-
     /**
      * Returns the block containing the given data offset. May return a block which does not contain the given
      * offset. In that case it will be the last block.
@@ -684,15 +740,16 @@ public:
 
 public:
     /** @todo might also need BlockMap in order to have a countable index to use for PrefetchStrategy! */
-    BlockFetcher( BitReader                 bitReader,
-                  std::shared_ptr<BlockMap> blockMap,
-                  uint8_t                   blockSize100k = 9,
-                  unsigned int              parallelism = 0 ) :
-        m_bitReader( std::move( bitReader ) ),
-        m_blockMap( std::move( blockMap ) ),
+    BlockFetcher( BitReader                    bitReader,
+                  std::shared_ptr<BlockFinder> blockFinder,
+                  uint8_t                      blockSize100k = 9,
+                  size_t                       parallelism = 0 ) :
+        m_bitReader    ( std::move( bitReader ) ),
+        m_blockFinder  ( std::move( blockFinder ) ),
         m_blockSize100k( blockSize100k ),
-        m_cache( 16 + std::thread::hardware_concurrency() ),
-        m_threadPool( parallelism == 0 ? std::thread::hardware_concurrency() : parallelism )
+        m_parallelism  ( parallelism == 0 ? std::thread::hardware_concurrency() : parallelism ),
+        m_cache        ( 16 + m_parallelism ),
+        m_threadPool   ( m_parallelism )
     {}
 
     ~BlockFetcher()
@@ -722,7 +779,7 @@ public:
 #endif
 
         if ( blockIndex == std::numeric_limits<size_t>::max() ) {
-            blockIndex = m_blockMap->getBlockIndex( blockOffset );
+            blockIndex = m_blockFinder->find( blockOffset );
         }
 
 
@@ -745,14 +802,36 @@ public:
             resultFuture = m_threadPool.submitTask( [this, blockOffset](){ return decodeBlock( blockOffset ); } );
         }
 
-        /* Check for ready prefetches, move to cache, and replace with other uncached prefetches. */
+        /* Check for ready prefetches and move them to cache. */
+        for ( auto it = m_prefetching.begin(); it != m_prefetching.end(); ) {
+            auto& [prefetchedBlockOffset, future] = *it;
 
+            using namespace std::chrono;
+            if ( future.valid() && ( future.wait_for( 0s ) == std::future_status::ready ) ) {
+                /** @todo catch exceptions, e.g., for wrongly detected blocks by the finder? */
+                m_cache.insert( prefetchedBlockOffset, std::make_shared<BlockData>( future.get() ) );
+
+                it = m_prefetching.erase( it );
+            } else {
+                ++it;
+            }
+        }
+
+        /* Get blocks to prefetch. In order to avoid oscillating caches, the fetching strategy should ony return
+         * less than the cache size number of blocks. It is fine if that means no work is being done in the background
+         * for some calls to 'get'! */
         m_fetchingStrategy.fetch( blockIndex );
-        auto toPrefetch = m_fetchingStrategy.prefetch();
-        toPrefetch.erase( std::remove_if( toPrefetch.begin(), toPrefetch.end(),
-                                          [this] ( const auto& offset ) { return m_cache.get( offset ).has_value(); } ),
-                          toPrefetch.end() );
+        auto blocksToPrefetch = m_fetchingStrategy.prefetch();
+        for ( auto blockIndexToPrefetch : blocksToPrefetch ) {
+            /* Do not prefetch already cached blocks or block indexes which are not yet in the block map. */
+            const auto prefetchBlockOffset = m_blockFinder->get( blockIndexToPrefetch, 0 );
+            if ( prefetchBlockOffset.has_value() && !m_cache.get( prefetchBlockOffset.value() ).has_value() ) {
+                auto decodeTask = [this, offset = *prefetchBlockOffset](){ return decodeBlock( offset ); };
+                m_prefetching.emplace( *prefetchBlockOffset, m_threadPool.submitTask( std::move( decodeTask ) ) );
+            }
+        }
 
+        /* Return result */
         if ( result ) {
             return *result;
         }
@@ -883,12 +962,14 @@ public:
 private:
     /* Variables required by decodeBlock and which therefore should be either const or locked. */
     const BitReader m_bitReader;
-    const std::shared_ptr<BlockMap> m_blockMap;
+    const std::shared_ptr<BlockFinder> m_blockFinder;
     uint8_t m_blockSize100k;
 
     /** Future holding the number of found magic bytes. Used to determine whether the thread is still running. */
     std::atomic<bool> m_cancelThreads{ false };
     std::condition_variable m_cancelThreadsCondition;
+
+    const size_t m_parallelism;
 
     Cache</** block offset in bits */ size_t, std::shared_ptr<BlockData> > m_cache;
     FetchingStrategy m_fetchingStrategy;
@@ -981,7 +1062,8 @@ public:
 
         if ( m_bitReader.tell() == 0 ) {
             readBzip2Header();
-            m_blockFetcher = std::make_unique<BlockFetcher>( m_bitReader, m_blockMap, m_blockSize100k, m_parallelism );
+            m_blockFetcher = std::make_unique<BlockFetcher>( m_bitReader, m_blockFinder,
+                                                             m_blockSize100k, m_parallelism );
         }
 
         if ( !m_blockFetcher ) {

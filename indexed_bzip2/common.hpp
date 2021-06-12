@@ -42,11 +42,17 @@ std::ostream&
 operator<<( std::ostream&  out,
             std::vector<T> vector )
 {
-    out << "{ ";
-    for ( const auto value : vector ) {
-        out << value << ", ";
+    if ( vector.empty() ) {
+        out << "{}";
+        return out;
+    }
+
+    out << "{ " << vector.front();
+    for ( auto value = std::next( vector.begin() ); value != vector.end(); ++value ) {
+        out << ", " << *value;
     }
     out << " }";
+
     return out;
 }
 
