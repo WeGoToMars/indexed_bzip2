@@ -80,13 +80,13 @@ public:
     }
 
     BitReader( BitReader&& other ) :
-        m_filePath( other.m_filePath ),
+        m_filePath( std::move( other.m_filePath ) ),
         m_fileDescriptor( other.m_fileDescriptor ),
         m_file( other.m_file ),
         m_seekable( other.m_seekable ),
         m_fileSizeBytes( other.m_fileSizeBytes ),
         m_offsetBits( other.m_offsetBits ),
-        m_inbuf( other.m_inbuf ),
+        m_inbuf( std::move( other.m_inbuf ) ),
         m_inbufPos( other.m_inbufPos ),
         m_lastReadSuccessful( other.m_lastReadSuccessful )
     {

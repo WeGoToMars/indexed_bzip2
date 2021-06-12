@@ -220,7 +220,12 @@ private:
 
             /* Assuming a valid BZ2 file, the time for this find method should be bounded and
              * responsive enough when reacting to cancelations. */
-            m_blockOffsets.push( m_bitStringFinder.find() );
+            const auto blockOffset = m_bitStringFinder.find();
+            if ( blockOffset == std::numeric_limits<size_t>::max() ) {
+                break;
+            }
+
+            m_blockOffsets.push( blockOffset );
 
             if constexpr ( m_debugOutput ) {
                 /* std::cerr << ( ThreadSafeOutput()
@@ -443,6 +448,7 @@ private:
 };
 
 
+#if 0
 /**
  * Generic wrapper for a function call, which caches results of functions calls by the function arguments.
  */
@@ -486,6 +492,7 @@ private:
     const Function m_function;
     Cache<PackedArguments, std::shared_ptr<Result> > m_cache;
 };
+#endif
 
 
 /**
@@ -512,6 +519,7 @@ public:
         /**< each BZ2 block in the stream will be given an increasing index number. */
         size_t blockIndex{ 0 };
         size_t encodedOffsetInBits{ 0 };
+        size_t encodedSizeInBits{ 0 };
         size_t decodedOffsetInBytes{ 0 };
         size_t decodedSizeInBytes{ 0 };
     };
@@ -613,7 +621,7 @@ public:
 
 
     [[nodiscard]] size_t
-    size() const
+    blockCount() const
     {
         std::scoped_lock lock( m_mutex );
         return m_blockToDataOffsets->size();
@@ -635,17 +643,21 @@ template<typename FetchingStrategy = FetchingStrategy::FetchNext>
 class BlockFetcher
 {
 public:
-    struct BlockData
+    struct BlockHeaderData
     {
-        size_t offsetBitsEncoded = std::numeric_limits<size_t>::max();
-        size_t encodedBitsCount  = 0;
+        size_t encodedOffsetInBits{ std::numeric_limits<size_t>::max() };
+        size_t encodedSizeInBits{ 0 }; /**< When calling readBlockheader, only contains valid data if EOS block. */
 
+        uint32_t expectedCRC{ 0 };  /**< if isEndOfStreamBlock == true, then this is the stream CRC. */
+        bool isEndOfStreamBlock{ false };
+        bool isEndOfFile{ false };
+    };
+
+    struct BlockData :
+        public BlockHeaderData
+    {
         std::vector<uint8_t> data;
-
-        uint32_t calculatedCRC = 0xFFFFFFFFL;
-        uint32_t expectedCRC   = 0; /** if isEndOfStreamBlock == true, then this is the stream CRC. */
-
-        bool isEndOfStreamBlock = false;
+        uint32_t calculatedCRC{ 0xFFFFFFFFL };
     };
 
 public:
@@ -657,7 +669,7 @@ public:
         m_bitReader( std::move( bitReader ) ),
         m_blockMap( std::move( blockMap ) ),
         m_blockSize100k( blockSize100k ),
-        m_threadPool( 1 /* parallelism == 0 ? std::thread::hardware_concurrency() : parallelism */ )
+        m_cache( 16 + std::thread::hardware_concurrency() ),
         m_threadPool( parallelism == 0 ? std::thread::hardware_concurrency() : parallelism )
     {}
 
@@ -784,21 +796,43 @@ public:
     }
 #endif
 
-    BlockData
-    decodeBlock( size_t blockOffset )
+    [[nodiscard]] BlockHeaderData
+    readBlockHeader( size_t blockOffset ) const
+    {
+        BitReader bitReader( m_bitReader );
+        bitReader.seek( blockOffset );
+        bzip2::Block block( bitReader );
+
+        BlockHeaderData result;
+        result.encodedOffsetInBits = blockOffset;
+        result.isEndOfStreamBlock = block.eos();
+        result.isEndOfFile = block.eof();
+        result.expectedCRC = block.bwdata.headerCRC;
+
+        if ( block.eos() ) {
+            std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
+            result.encodedSizeInBits = bitReader.tell() - blockOffset;
+        }
+
+        return result;
+    }
+
+    [[nodiscard]] BlockData
+    decodeBlock( size_t blockOffset ) const
     {
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
         bzip2::Block block( bitReader );
 
         BlockData result;
-        result.offsetBitsEncoded = blockOffset;
+        result.encodedOffsetInBits = blockOffset;
         result.isEndOfStreamBlock = block.eos();
+        result.isEndOfFile = block.eof();
         result.expectedCRC = block.bwdata.headerCRC;
 
         if ( block.eos() ) {
             std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
-            result.encodedBitsCount = bitReader.tell() - blockOffset;
+            result.encodedSizeInBits = bitReader.tell() - blockOffset;
             return result;
         }
 
@@ -823,7 +857,7 @@ public:
         while ( block.bwdata.writeCount > 0 );
 
         result.data.resize( decodedDataSize );
-        result.encodedBitsCount = bitReader.tell() - blockOffset;
+        result.encodedSizeInBits = bitReader.tell() - blockOffset;
         result.calculatedCRC = block.bwdata.dataCRC;
 
         return result;
@@ -937,11 +971,7 @@ public:
 
 
 public:
-    /**
-     * Requests data chunks from the BlockDatabase using the current position until we got as much data as requested.
-     * The BlockDatabase "analyzes" these requests and prefetches and caches chunks in parallel.
-     */
-    int
+    long int
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
           const size_t nBytesToRead = std::numeric_limits<size_t>::max() )
@@ -969,10 +999,11 @@ public:
             const auto blockInfo = m_blockMap->find( m_currentPosition );
             if ( !blockInfo.contains( m_currentPosition ) ) {
                 /* Fetch new block for the first time and add information to block map. */
-                const auto blockIndex = m_blockMap->size();
+                const auto blockIndex = m_blockMap->blockCount();
                 const auto encodedOffsetInBits = m_blockFinder->get( blockIndex );
                 if ( !encodedOffsetInBits ) {
-                    std::cerr << "EOF reached 2\n";
+                    std::cerr << ( ThreadSafeOutput() << "EOF reached 2" ).str();
+                    m_blockToDataOffsetsComplete = true;
                     m_atEndOfFile = true;
                     break;
                 }
@@ -1023,65 +1054,52 @@ public:
             break;
         }
 
-        if ( static_cast<long long int>( tell() ) == offset ) {
+        offset = std::max<decltype( offset )>( 0, offset );
+
+        if ( static_cast<size_t>( offset ) == tell() ) {
+            return offset;
+        }
+
+        /* Backward seeking is no problem at all! 'tell' may only return <= size()
+         * as value meaning we are now < size() and therefore EOF can be cleared! */
+        if ( static_cast<size_t>( offset ) < tell() ) {
+            m_atEndOfFile = false;
+            m_currentPosition = offset;
             return offset;
         }
 
         /* m_blockMap is only accessed by read and seek, which are not to be called from different threads,
-         * so we do not have to lock m_blockMap. */
-        const auto blockInfo = m_blockMap->find( offset ); /** @todo use this! */
-        /** @todo There shouldn't be much to do except to set m_currentPosition and check against eof! */
+         * so we do not have to lock it. */
+        const auto blockInfo = m_blockMap->find( offset );
+        if ( static_cast<size_t>( offset ) < blockInfo.decodedOffsetInBytes ) {
+            throw std::logic_error( "Block map returned unwanted block!" );
+        }
 
-        /** @todo use the incomplete data to allow try forward seeking or seek to the furthest position! */
-        /* When block offsets are not complete yet, emulate forward seeking with a read. */
-        if ( !m_blockToDataOffsetsComplete && ( offset > static_cast<long long int>( tell() ) ) ) {
-            read( -1, nullptr, offset - tell() );
+        if ( blockInfo.contains( offset ) ) {
+            m_atEndOfFile = false;
+            m_currentPosition = offset;
             return tell();
         }
 
-
-
-        /** @todo emulate forward seeking by reading until we either reach EOF or find the desired offset. */
-
-
-        /* size() and then seeking requires the block offsets to be available! */
-        if ( !m_blockToDataOffsetsComplete ) {
-            read();
+        /** @todo Move m_blockToDataOffsetsComplete into BlockMap and lock everything in this seek function? */
+        assert( static_cast<size_t>( offset ) - blockInfo.decodedOffsetInBytes > blockInfo.decodedSizeInBytes );
+        if ( m_blockToDataOffsetsComplete ) {
+        #if 0
+            m_currentPosition = offset;
+            return tell();
+        #endif
+            m_atEndOfFile = true;
+            m_currentPosition = size();
+            return tell();
         }
 
-        offset = std::max<decltype( offset )>( 0, offset );
-        m_currentPosition = offset;
-#if 0
-        //flushOutputBuffer(); // ensure that no old data is left over
-
-        m_atEndOfFile = static_cast<size_t>( offset ) >= size();
-        if ( m_atEndOfFile ) {
-            return size();
-        }
-
-        /* find offset from map (key and values are sorted, so we can bisect!) */
-        const auto blockOffset = std::lower_bound(
-            m_blockToDataOffsets.rbegin(), m_blockToDataOffsets.rend(), std::make_pair( 0, offset ),
-            [] ( std::pair<size_t, size_t> a, std::pair<size_t, size_t> b ) { return a.second > b.second; } );
-
-        if ( ( blockOffset == m_blockToDataOffsets.rend() ) || ( static_cast<size_t>( offset ) < blockOffset->second ) ) {
-            throw std::runtime_error( "Could not find block to seek to for given offset" );
-        }
-        const auto nBytesSeekInBlock = offset - blockOffset->second;
-
-        m_lastHeader = readBlockHeader( blockOffset->first );
-        m_lastHeader.readBlockData();
-        /* no decodeBzip2 necessary because we only seek inside one block! */
-        const auto nBytesDecoded = decodeStream( -1, nullptr, nBytesSeekInBlock );
-
-        if ( nBytesDecoded != nBytesSeekInBlock ) {
-            std::stringstream msg;
-            msg << "Could not read the required " << nBytesSeekInBlock
-            << " to seek in block but only " << nBytesDecoded << "\n";
-            throw std::runtime_error( msg.str() );
-        }
-#endif
-        return offset;
+        /* Jump to furthest known point as performance optimization. Note that even if that is right after
+         * the last byte, i.e., offset == size(), then no eofbit is set even in ifstream! In ifstream you
+         * can even seek to after the file end with no fail bits being set in my tests! */
+        m_atEndOfFile = false;
+        m_currentPosition = blockInfo.decodedOffsetInBytes + blockInfo.decodedSizeInBytes;
+        read( -1, nullptr, offset - tell() );
+        return tell();
     }
 
 private:

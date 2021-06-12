@@ -617,7 +617,7 @@ Block::BurrowsWheelerTransformData::prepare()
 
 inline uint32_t
 Block::BurrowsWheelerTransformData::decodeBlock( const uint32_t nMaxBytesToDecode,
-                                                                  char*          outputBuffer )
+                                                 char*          outputBuffer )
 {
     assert( outputBuffer != nullptr );
     uint32_t nBytesDecoded = 0;

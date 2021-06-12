@@ -89,6 +89,14 @@ testSimpleOpenAndClose()
 void
 testDecodingBz2ForFirstTime()
 {
+    size_t decodedFileSize = 0;
+    {
+        std::ifstream file( decodedTestFilePath );
+        file.seekg( 0, std::ios::end );
+        decodedFileSize = file.tellg();
+    }
+    std::cerr << "Decoded file size: " << decodedFileSize << "\n";
+
     std::ifstream decodedFile( decodedTestFilePath );
     ParallelBZ2Reader encodedFile( encodedTestFilePath );
 
@@ -96,12 +104,27 @@ testDecodingBz2ForFirstTime()
         [&]( long long int offset,
              int           origin = SEEK_SET )
         {
+            std::cerr << "Seek to " << offset << "\n";
+
+            /**
+             * Clear fail bit in order to seek back.
+             * When using read to read the number of bytes the file has, then no eof bit is set.
+             * As soon as you request one more byte than the file contains, both, the failbit and eofbit are set
+             * but only the eofbit will be cleared by seekg since C++11.
+             * @see https://en.cppreference.com/w/cpp/io/basic_istream/seekg
+             * > Before doing anything else, seekg clears eofbit. 	(since C++11)
+             */
+            if ( decodedFile.fail() ) {
+                decodedFile.clear();
+            }
             decodedFile.seekg( offset, toSeekdir( origin ) );
             const auto newSeekPosDecoded = static_cast<ssize_t>( decodedFile.tellg() );
             const auto newSeekPosEncoded = static_cast<ssize_t>( encodedFile.seek( offset, origin ) );
 
-            REQUIRE_EQUAL( newSeekPosDecoded, newSeekPosEncoded );
-            REQUIRE_EQUAL( static_cast<ssize_t>( decodedFile.tellg() ), static_cast<ssize_t>( encodedFile.tell() ) );
+            /* Wanted differing behavior between std::ifstream and BZ2Reader. */
+            REQUIRE_EQUAL( std::min<ssize_t>( newSeekPosDecoded, decodedFileSize ), newSeekPosEncoded );
+            REQUIRE_EQUAL( std::min<ssize_t>( decodedFile.tellg(), decodedFileSize ),
+                           static_cast<ssize_t>( encodedFile.tell() ) );
             REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
         };
 
@@ -113,11 +136,20 @@ testDecodingBz2ForFirstTime()
             std::vector<char> decodedBuffer( nBytesToRead, 111 );
             std::vector<char> encodedBuffer( nBytesToRead, 222 );
 
-            REQUIRE_EQUAL( decodedBuffer.size(), encodedBuffer.size() );
+            if ( !encodedFile.eof() ) {
+                REQUIRE_EQUAL( static_cast<size_t>( decodedFile.tellg() ), encodedFile.tell() );
+            }
 
             /* Why doesn't the ifstream has a similar return specifying the number of read bytes?! */
             decodedFile.read( decodedBuffer.data(), nBytesToRead );
-            const auto nBytesRead = encodedFile.read( -1, encodedBuffer.data(), nBytesToRead );
+            const auto nBytesReadDecoded = decodedFile.gcount();
+
+            const auto nBytesReadEncoded = encodedFile.read( -1, encodedBuffer.data(), nBytesToRead );
+
+            REQUIRE_EQUAL( nBytesReadDecoded, nBytesReadEncoded );
+
+            decodedBuffer.resize( nBytesReadDecoded );
+            encodedBuffer.resize( nBytesReadEncoded );
 
             /* Encountering eof during read also sets fail bit meaning tellg will return -1! */
             if ( !decodedFile.eof() ) {
@@ -127,13 +159,20 @@ testDecodingBz2ForFirstTime()
             REQUIRE_EQUAL( decodedFile.eof(), encodedFile.eof() );
 
             /* Avoid REQUIRE_EQUAL in order to avoid printing huge binary buffers out. */
-            int equalElements = 0;
-            for ( size_t i = 0; i < decodedBuffer.size(); ++i ) {
+            size_t equalElements = 0;
+            size_t firstInequal = std::numeric_limits<long int>::max();
+            for ( size_t i = 0; i < std::min( decodedBuffer.size(), encodedBuffer.size() ); ++i ) {
                 if ( decodedBuffer[i] == encodedBuffer[i] ) {
                     ++equalElements;
+                } else {
+                    firstInequal = std::min( firstInequal, i );
                 }
             }
-            REQUIRE_EQUAL( equalElements, nBytesRead );
+            REQUIRE_EQUAL( equalElements, std::min( decodedBuffer.size(), encodedBuffer.size() ) );
+
+            if ( equalElements != std::min( decodedBuffer.size(), encodedBuffer.size() ) ) {
+                std::cerr << "First inequal element at " << firstInequal << "\n";
+            }
         };
 
     /* Try some subsequent small reads. */
@@ -192,6 +231,8 @@ testDecodingBz2ForFirstTime()
 
     seek( 1*1024*1024 - 432 );
     read( 432 );
+
+    REQUIRE_EQUAL( decodedFileSize, encodedFile.size() );
 }
 
 
