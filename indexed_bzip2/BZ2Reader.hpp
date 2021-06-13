@@ -13,11 +13,12 @@
 
 #include "bzip2.hpp"
 #include "BitReader.hpp"
+#include "BZ2ReaderInterface.hpp"
 #include "FileReader.hpp"
 
 
 class BZ2Reader :
-    public FileReader
+    public BZ2ReaderInterface
 {
 public:
     using BlockHeader = bzip2::Block;
@@ -108,7 +109,7 @@ public:
     }
 
     bool
-    blockOffsetsComplete() const
+    blockOffsetsComplete() const override
     {
         return m_blockToDataOffsetsComplete;
     }
@@ -118,7 +119,7 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    blockOffsets()
+    blockOffsets() override
     {
         if ( !m_blockToDataOffsetsComplete ) {
             read();
@@ -134,13 +135,13 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    availableBlockOffsets()
+    availableBlockOffsets() override
     {
         return m_blockToDataOffsets;
     }
 
     void
-    setBlockOffsets( std::map<size_t, size_t> offsets )
+    setBlockOffsets( std::map<size_t, size_t> offsets ) override
     {
         if ( offsets.size() < 2 ) {
             throw std::invalid_argument( "Block offset map must contain at least one valid block and one EOS block!" );
@@ -155,7 +156,7 @@ public:
      *       of the returned position is ~100-900kB. It's only useful for a rough estimate.
      */
     size_t
-    tellCompressed() const
+    tellCompressed() const override
     {
         return m_bitReader.tell();
     }
@@ -167,7 +168,7 @@ public:
     size_t
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
-          const size_t nBytesToRead = std::numeric_limits<size_t>::max() )
+          const size_t nBytesToRead = std::numeric_limits<size_t>::max() ) override
     {
         size_t nBytesDecoded = 0;
         while ( ( nBytesDecoded < nBytesToRead ) && !m_bitReader.eof() && !eof() ) {

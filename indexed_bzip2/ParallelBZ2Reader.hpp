@@ -22,6 +22,7 @@
 
 #include "bzip2.hpp"
 #include "BitStringFinder.hpp"
+#include "BZ2ReaderInterface.hpp"
 #include "Cache.hpp"
 #include "common.hpp"
 #include "FileReader.hpp"
@@ -742,7 +743,7 @@ private:
  * @note Calls to this class are not thread-safe! Even though they use threads to evaluate them in parallel.
  */
 class ParallelBZ2Reader :
-    public FileReader
+    public BZ2ReaderInterface
 {
 public:
     using BlockFetcher = ::BlockFetcher<FetchingStrategy::FetchNext>;
@@ -751,19 +752,31 @@ public:
     /* Constructors */
 
     explicit
-    ParallelBZ2Reader( int fileDescriptor ) :
+    ParallelBZ2Reader( int    fileDescriptor,
+                       size_t parallelization = 0 ) :
         m_bitReader( fileDescriptor ),
+        m_fetcherParallelization( parallelization == 0
+                                  ? std::max<size_t>( 1U, std::thread::hardware_concurrency() )
+                                  : parallelization ),
         m_blockFinder( std::make_shared<BlockFinder>( fileDescriptor, m_finderParallelization ) )
     {}
 
     ParallelBZ2Reader( const char*  bz2Data,
-                       const size_t size ) :
+                       const size_t size,
+                       size_t       parallelization = 0 ) :
         m_bitReader( reinterpret_cast<const uint8_t*>( bz2Data ), size ),
+        m_fetcherParallelization( parallelization == 0
+                                  ? std::max<size_t>( 1U, std::thread::hardware_concurrency() )
+                                  : parallelization ),
         m_blockFinder( std::make_shared<BlockFinder>( bz2Data, size, m_finderParallelization ) )
     {}
 
-    ParallelBZ2Reader( const std::string& filePath ) :
+    ParallelBZ2Reader( const std::string& filePath,
+                       size_t             parallelization = 0 ) :
         m_bitReader( filePath ),
+        m_fetcherParallelization( parallelization == 0
+                                  ? std::max<size_t>( 1U, std::thread::hardware_concurrency() )
+                                  : parallelization ),
         m_blockFinder( std::make_shared<BlockFinder>( filePath, m_finderParallelization ) )
     {}
 
@@ -819,12 +832,12 @@ public:
         return m_blockToDataOffsets.rbegin()->second;
     }
 
-    /* BZip2 specific methods */
+    /* BZ2ReaderInterface overrides */
 
-    long int
+    size_t
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
-          const size_t nBytesToRead = std::numeric_limits<size_t>::max() )
+          const size_t nBytesToRead = std::numeric_limits<size_t>::max() ) override
     {
         if ( eof() || ( nBytesToRead == 0 ) ) {
             return 0;
@@ -981,7 +994,7 @@ public:
     /* BZip2 specific methods */
 
     bool
-    blockOffsetsComplete() const
+    blockOffsetsComplete() const override
     {
         return m_blockToDataOffsetsComplete;
     }
@@ -991,7 +1004,7 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    blockOffsets()
+    blockOffsets() override
     {
         if ( !m_blockToDataOffsetsComplete ) {
             read();
@@ -1007,13 +1020,13 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    availableBlockOffsets()
+    availableBlockOffsets() override
     {
         return m_blockToDataOffsets;
     }
 
     void
-    setBlockOffsets( std::map<size_t, size_t> offsets )
+    setBlockOffsets( std::map<size_t, size_t> offsets ) override
     {
         if ( offsets.size() < 2 ) {
             throw std::invalid_argument( "Block offset map must contain at least one valid block and one EOS block!" );
@@ -1028,7 +1041,7 @@ public:
      *       of the returned position is ~100-900kB. It's only useful for a rough estimate.
      */
     size_t
-    tellCompressed() const
+    tellCompressed() const override
     {
 
         const auto blockInfo = m_blockMap->findDataOffset( m_currentPosition );
@@ -1070,7 +1083,7 @@ private:
     std::map<size_t, size_t> m_blockToDataOffsets;
 
 private:
-    size_t const m_fetcherParallelization{ std::max<size_t>( 1U, std::thread::hardware_concurrency() ) };
+    size_t const m_fetcherParallelization;
     /** The block finder is much faster than the fetcher and therefore does not require es much parallelization! */
     size_t const m_finderParallelization{ ceilDiv( m_fetcherParallelization, 8U ) };
 

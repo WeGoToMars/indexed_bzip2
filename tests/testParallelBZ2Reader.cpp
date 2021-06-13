@@ -151,7 +151,7 @@ testDecodingBz2ForFirstTime()
 
             const auto nBytesReadEncoded = encodedFile.read( -1, encodedBuffer.data(), nBytesToRead );
 
-            REQUIRE_EQUAL( nBytesReadDecoded, nBytesReadEncoded );
+            REQUIRE_EQUAL( static_cast<size_t>( nBytesReadDecoded ), nBytesReadEncoded );
 
             decodedBuffer.resize( nBytesReadDecoded );
             encodedBuffer.resize( nBytesReadEncoded );

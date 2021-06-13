@@ -15,7 +15,7 @@ extensions = [
                                else 'indexed_bzip2/indexed_bzip2.cpp' ],
         include_dirs       = [ '.' ],
         language           = 'c++',
-        extra_compile_args = [ '-std=c++11', '-O3', '-DNDEBUG' ],
+        extra_compile_args = [ '-std=c++17', '-O3', '-DNDEBUG' ],
     ),
 ]
 

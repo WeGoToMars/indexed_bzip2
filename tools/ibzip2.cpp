@@ -362,13 +362,16 @@ cli( int argc, char** argv )
             std::cerr << "Decompress\n";
         }
 
-        auto reader = decoderParallelism == 1
-                      ? ( inputFilePath.empty()
-                          ? std::make_unique<BZ2Reader>( STDIN_FILENO )
-                          : std::make_unique<BZ2Reader>( inputFilePath ) )
-                      : ( inputFilePath.empty()
-                          ? std::make_unique<ParallelBZ2Reader>( STDIN_FILENO )
-                          : std::make_unique<ParallelBZ2Reader>( inputFilePath ) );
+        std::unique_ptr<BZ2ReaderInterface> reader;
+        if ( decoderParallelism == 1 ) {
+            reader = inputFilePath.empty()
+                     ? std::make_unique<BZ2Reader>( STDIN_FILENO )
+                     : std::make_unique<BZ2Reader>( inputFilePath );
+        } else {
+            reader = inputFilePath.empty()
+                     ? std::make_unique<ParallelBZ2Reader>( STDIN_FILENO, decoderParallelism )
+                     : std::make_unique<ParallelBZ2Reader>( inputFilePath, decoderParallelism );
+        }
 
         auto outputFileDescriptor = STDOUT_FILENO;
         unique_file_ptr outputFile;
@@ -383,8 +386,13 @@ cli( int argc, char** argv )
                 std::vector<char> buffer( bufferSize, 0 );
                 const size_t nBytesRead = reader->read( -1, buffer.data(), buffer.size() );
                 assert( nBytesRead <= buffer.size() );
-                write( outputFileDescriptor, buffer.data(), nBytesRead );
-                nBytesWrittenTotal += nBytesRead;
+
+                const auto nBytesWritten = write( outputFileDescriptor, buffer.data(), nBytesRead );
+                if ( static_cast<size_t>( nBytesWritten ) != nBytesRead ) {
+                    std::cerr << "Could not write all the decoded data to the specified output!\n";
+                }
+
+                nBytesWrittenTotal += nBytesWritten;
             } while ( !reader->eof() );
         } else {
             nBytesWrittenTotal = reader->read( outputFileDescriptor );
