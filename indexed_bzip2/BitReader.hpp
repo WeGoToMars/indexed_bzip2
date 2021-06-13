@@ -30,7 +30,13 @@ class BitReader :
     public FileReader
 {
 public:
-    static constexpr size_t IOBUF_SIZE = 1024*1024;
+    /**
+     * If it is too large, then the use case of only reading one Bzip2 block per opened BitReader
+     * will load much more data than necessary because of the too large buffer.
+     * The size should also be a multiple of the block size of the underlying device.
+     * Any power of 2 larger than 4096 (4k blocks) should be safe bet.
+     */
+    static constexpr size_t IOBUF_SIZE = 128*1024;
     static constexpr int NO_FILE = -1;
 
 public:

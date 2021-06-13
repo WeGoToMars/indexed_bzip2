@@ -84,6 +84,12 @@ public:
         m_cacheStrategy.touch( key );
     }
 
+    [[nodiscard]] bool
+    test( const Key& key ) const
+    {
+        return m_cache.find( key ) != m_cache.end();
+    }
+
     [[nodiscard]] std::optional<Value>
     get( const Key& key )
     {

@@ -265,6 +265,7 @@ private:
         m_blockOffsets.finalize();
 
         if ( m_debugOutput ) {
+            /** @todo 123 with BitStringFinder but only 122 with ParallelBitStringFinder!!!!!!! */
             std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found" << m_blockOffsets.size() << "blocks" ).str();
         }
     }
@@ -486,6 +487,24 @@ public:
 
     ~BlockFetcher()
     {
+        if constexpr( m_debugOutput ) {
+            const auto cacheHitRate = ( m_cache.hits() + m_prefetchDirectHits )
+                                      / static_cast<double>( m_cache.hits() + m_cache.misses() + m_prefetchDirectHits );
+            std::cerr << (
+                ThreadSafeOutput() << "[BlockFetcher::~BlockFetcher]"
+                << "\n   Cache hits                 :" << m_cache.hits()
+                << "\n   misses                     :" << m_cache.misses()
+                << "\n   prefetched blocks          :" << m_prefetchCount
+                << "\n   direct prefetch queue hits :" << m_prefetchDirectHits
+                << "\n   hit rate                   :" << cacheHitRate
+                << "\n   time spent in:"
+                << "\n       bzip2::readBlockData          :" << m_readBlockDataTotalTime << "s"
+                << "\n       time spent in decodeBlock     :" << m_decodeBlockTotalTime   << "s"
+                << "\n       time spent waiting on futures :" << m_futureWaitTotalTime    << "s"
+            ).str();
+
+        }
+
         m_cancelThreads = true;
         m_cancelThreadsCondition.notify_all();
     }
@@ -497,27 +516,27 @@ public:
     get( size_t blockOffset,
          size_t blockIndex = std::numeric_limits<size_t>::max() )
     {
-        /* First, access cache before data might get evicted! (May return std::nullopt) */
-        auto result = m_cache.get( blockOffset );
-
-        if ( blockIndex == std::numeric_limits<size_t>::max() ) {
-            blockIndex = m_blockFinder->find( blockOffset );
-        }
-
 
         /* Check whether the desired offset is prefetched. */
         std::future<BlockData> resultFuture;
-        if ( !result ) {
-            const auto match = std::find_if(
-                m_prefetching.begin(), m_prefetching.end(),
-                [blockOffset] ( auto& kv ){ return kv.first == blockOffset; }
-            );
+        const auto match = std::find_if(
+            m_prefetching.begin(), m_prefetching.end(),
+            [blockOffset] ( auto& kv ){ return kv.first == blockOffset; }
+        );
 
-            if ( match != m_prefetching.end() ) {
-                resultFuture = std::move( match->second );
-                m_prefetching.erase( match );
-                assert( resultFuture.valid() );
-            }
+        if ( match != m_prefetching.end() ) {
+            resultFuture = std::move( match->second );
+            m_prefetching.erase( match );
+            assert( resultFuture.valid() );
+
+            ++m_prefetchDirectHits;
+        }
+
+        /* Access cache before data might get evicted!
+         * Access cache after prefetch queue to avoid incrementing the cache misses counter.*/
+        std::optional<std::shared_ptr<BlockData> > result;
+        if ( !resultFuture.valid() ) {
+            result = m_cache.get( blockOffset );
         }
 
         /* Start requested calculation if necessary. */
@@ -543,8 +562,12 @@ public:
         /* Get blocks to prefetch. In order to avoid oscillating caches, the fetching strategy should ony return
          * less than the cache size number of blocks. It is fine if that means no work is being done in the background
          * for some calls to 'get'! */
+        if ( blockIndex == std::numeric_limits<size_t>::max() ) {
+            blockIndex = m_blockFinder->find( blockOffset );
+        }
         m_fetchingStrategy.fetch( blockIndex );
         auto blocksToPrefetch = m_fetchingStrategy.prefetch();
+
         for ( auto blockIndexToPrefetch : blocksToPrefetch ) {
             if ( m_prefetching.size() + /* thread with the requested block */ 1 >= m_parallelism ) {
                 break;
@@ -557,14 +580,14 @@ public:
 
             /* Do not prefetch already cached/prefetched blocks or block indexes which are not yet in the block map. */
             const auto prefetchBlockOffset = m_blockFinder->get( blockIndexToPrefetch, 0 );
-            if ( auto match = m_prefetching.find( *prefetchBlockOffset );
-                 (match != m_prefetching.end() )
+            if ( ( m_prefetching.find( *prefetchBlockOffset ) != m_prefetching.end() )
                  || !prefetchBlockOffset.has_value()
-                 || m_cache.get( prefetchBlockOffset.value() ).has_value() )
+                 || m_cache.test( prefetchBlockOffset.value() ) )
             {
                 continue;
             }
 
+            ++m_prefetchCount;
             auto decodeTask = [this, offset = *prefetchBlockOffset](){ return decodeBlock( offset ); };
             auto prefetchedFuture = m_threadPool.submitTask( std::move( decodeTask ) );
             const auto [_, wasInserted] = m_prefetching.emplace( *prefetchBlockOffset, std::move( prefetchedFuture ) );
@@ -584,7 +607,15 @@ public:
             return *result;
         }
 
+        const auto t0 = std::chrono::high_resolution_clock::now();
         result = std::make_shared<BlockData>( resultFuture.get() );
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto dt = std::chrono::duration<double>( t1 - t0 ).count();
+        {
+            std::scoped_lock lock( m_analyticsMutex );
+            m_futureWaitTotalTime += dt;
+        }
+
         m_cache.insert( blockOffset, *result );
         return *result;
     }
@@ -614,6 +645,8 @@ private:
     [[nodiscard]] BlockData
     decodeBlock( size_t blockOffset ) const
     {
+        const auto t0 = std::chrono::high_resolution_clock::now();
+
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
         bzip2::Block block( std::move( bitReader ) );
@@ -624,13 +657,22 @@ private:
         result.isEndOfFile = block.eof();
         result.expectedCRC = block.bwdata.headerCRC;
 
+        /* Actually, this should never happen with the current implementation because only blocks found by the
+         * block finder will be handled here and the block finder does not search for EOS magic bits. */
         if ( block.eos() ) {
-            std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
             result.encodedSizeInBits = block.encodedSizeInBits;
             return result;
         }
 
+
+        const auto t2 = std::chrono::high_resolution_clock::now();
         block.readBlockData();
+        const auto t3 = std::chrono::high_resolution_clock::now();
+        const auto dt2 = std::chrono::duration<double>( t3 - t2 ).count();
+        {
+            std::scoped_lock lock( m_analyticsMutex );
+            m_readBlockDataTotalTime += dt2;
+        }
 
         size_t decodedDataSize = 0;
         do
@@ -654,10 +696,27 @@ private:
         result.encodedSizeInBits = block.encodedSizeInBits;
         result.calculatedCRC = block.bwdata.dataCRC;
 
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        const auto dt = std::chrono::duration<double>( t1 - t0 ).count();
+        {
+            std::scoped_lock lock( m_analyticsMutex );
+            m_decodeBlockTotalTime += dt;
+        }
+
         return result;
     }
 
 private:
+    static constexpr bool m_debugOutput{ true };
+
+    /* Analytics */
+    size_t m_prefetchCount{ 0 };
+    size_t m_prefetchDirectHits{ 0 };
+    mutable double m_readBlockDataTotalTime{ 0 };
+    mutable double m_decodeBlockTotalTime{ 0 };
+    mutable double m_futureWaitTotalTime{ 0 };
+    mutable std::mutex m_analyticsMutex;
+
     /* Variables required by decodeBlock and which therefore should be either const or locked. */
     const BitReader m_bitReader;
     const std::shared_ptr<BlockFinder> m_blockFinder;
@@ -722,14 +781,11 @@ public:
             throw std::logic_error( "Block fetcher should have been initialized." );
         }
 
-        /** @todo read Bzip2 header for CRC check and stuff. Might be problematic for multiple Bzip2 streams. */
-        /** @todo Need to fill BZ2Reader::m_blockToDataOffsets with data from decoded block sizes */
-
         size_t nBytesDecoded = 0;
         while ( ( nBytesDecoded < nBytesToRead ) && !eof() ) {
             std::shared_ptr<BlockFetcher::BlockData> blockData;
 
-            const auto blockInfo = m_blockMap->findDataOffset( m_currentPosition );
+            auto blockInfo = m_blockMap->findDataOffset( m_currentPosition );
             if ( !blockInfo.contains( m_currentPosition ) ) {
                 /* Fetch new block for the first time and add information to block map. */
                 const auto blockIndex = m_blockMap->blockCount();
@@ -741,11 +797,11 @@ public:
                     break;
                 }
 
-
                 blockData = m_blockFetcher->get( *encodedOffsetInBits, blockIndex );
-                m_blockMap->insert( blockData->encodedOffsetInBits, blockData->encodedSizeInBits, blockData->data.size() );
+                m_blockMap->insert( blockData->encodedOffsetInBits,
+                                    blockData->encodedSizeInBits,
+                                    blockData->data.size() );
 
-                /** @todo Try to read next block here in order to insert EOS blocks, which the block finder ignores! */
                 /* Check whether the next block is an EOS block, which has a different magic byte string
                  * and therefore will not be found by the block finder! Such a block will span 48 + 32 + (0..7) bits.
                  * However, the last 0 to 7 bits are only padding and not needed! */
@@ -758,11 +814,19 @@ public:
                                             0 );
                     }
                 }
-                continue;
+
+                /* We could also directly continue but then the block would be refetched, and fetching quite complex. */
+                blockInfo = m_blockMap->findDataOffset( m_currentPosition );
+                if ( !blockInfo.contains( m_currentPosition ) ) {
+                    continue;
+                }
+            } else {
+                blockData = m_blockFetcher->get( blockInfo.encodedOffsetInBits );
             }
 
+            /* Copy data from fetched block to output. */
+
             const auto offsetInBlock = m_currentPosition - blockInfo.decodedOffsetInBytes;
-            blockData = m_blockFetcher->get( blockInfo.encodedOffsetInBits );
 
             if ( offsetInBlock >= blockData->data.size() ) {
                 throw std::logic_error( "Block does not contain the requested offset even though it "
@@ -771,10 +835,18 @@ public:
 
             const auto nBytesToDecode = std::min( blockData->data.size() - offsetInBlock,
                                                   nBytesToRead - nBytesDecoded );
-            nBytesDecoded += writeResult( outputFileDescriptor,
-                                          outputBuffer == nullptr ? nullptr : outputBuffer + nBytesDecoded,
-                                          reinterpret_cast<const char*>( blockData->data.data() + offsetInBlock ),
-                                          nBytesToDecode );
+            const auto nBytesWritten = writeResult(
+                outputFileDescriptor,
+                outputBuffer == nullptr ? nullptr : outputBuffer + nBytesDecoded,
+                reinterpret_cast<const char*>( blockData->data.data() + offsetInBlock ),
+                nBytesToDecode
+            );
+
+            if ( nBytesWritten != nBytesToDecode ) {
+                throw std::logic_error( "Less than the requested number of bytes were written to the output!" );
+            }
+
+            nBytesDecoded += nBytesToDecode;
             m_currentPosition += nBytesToDecode;
         }
 
