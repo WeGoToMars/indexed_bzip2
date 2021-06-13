@@ -1,17 +1,24 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <condition_variable>
 #include <cstddef>
+#include <cstring>
+#include <deque>
+#include <iostream>
 #include <iterator>
 #include <limits>
-#include <list>
 #include <map>
-#include <numeric>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
+#include <vector>
 
 #include "bzip2.hpp"
 #include "BitStringFinder.hpp"
@@ -147,21 +154,21 @@ class BlockFinder
 public:
     explicit
     BlockFinder( int    fileDescriptor,
-                 size_t parallelisation ) :
-        m_bitStringFinder( fileDescriptor, bzip2::MAGIC_BITS_BLOCK )
+                 size_t parallelization ) :
+        m_bitStringFinder( fileDescriptor, bzip2::MAGIC_BITS_BLOCK, parallelization )
     {}
 
     explicit
     BlockFinder( char const* buffer,
                  size_t      size,
-                 size_t      parallelisation ) :
-        m_bitStringFinder( buffer, size, bzip2::MAGIC_BITS_BLOCK )
+                 size_t      parallelization ) :
+        m_bitStringFinder( buffer, size, bzip2::MAGIC_BITS_BLOCK, parallelization )
     {}
 
     explicit
     BlockFinder( std::string const& filePath,
-                 size_t             parallelisation ) :
-        m_bitStringFinder( filePath, bzip2::MAGIC_BITS_BLOCK )
+                 size_t             parallelization ) :
+        m_bitStringFinder( filePath, bzip2::MAGIC_BITS_BLOCK, parallelization )
     {}
 
     ~BlockFinder()
@@ -264,7 +271,6 @@ private:
         m_blockOffsets.finalize();
 
         if ( m_debugOutput ) {
-            /** @todo 123 with BitStringFinder but only 122 with ParallelBitStringFinder!!!!!!! */
             std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found" << m_blockOffsets.size() << "blocks" ).str();
         }
     }
@@ -285,9 +291,7 @@ private:
      */
     const size_t m_prefetchCount = 3 * std::thread::hardware_concurrency();
 
-    /** @todo Using ParallelBitStringFinder leads to tests failing when trying to read the whole file.
-     *        It seems like the last block before EOF gets dropped by the read call somehow! */
-    BitStringFinder<bzip2::MAGIC_BITS_SIZE> m_bitStringFinder;
+    ParallelBitStringFinder<bzip2::MAGIC_BITS_SIZE> m_bitStringFinder;
     std::atomic<bool> m_cancelThread{ false };
     static constexpr bool m_debugOutput = true;
 
@@ -472,14 +476,13 @@ public:
     };
 
 public:
-    /** @todo might also need BlockMap in order to have a countable index to use for PrefetchStrategy! */
     BlockFetcher( BitReader                    bitReader,
                   std::shared_ptr<BlockFinder> blockFinder,
                   size_t                       parallelism ) :
         m_bitReader    ( bitReader ),
         m_blockFinder  ( std::move( blockFinder ) ),
         m_blockSize100k( bzip2::readBzip2Header( bitReader ) ),
-        m_parallelism  ( parallelism == 0 ? std::thread::hardware_concurrency() : parallelism ),
+        m_parallelism  ( parallelism == 0 ? std::max<size_t>( 1U, std::thread::hardware_concurrency() ) : parallelism ),
         m_cache        ( 16 + m_parallelism ),
         m_threadPool   ( m_parallelism )
     {}
@@ -512,8 +515,8 @@ public:
      * Fetches, prefetches, caches, and returns result.
      */
     [[nodiscard]] std::shared_ptr<BlockData>
-    get( size_t blockOffset,
-         size_t blockIndex = std::numeric_limits<size_t>::max() )
+    get( size_t                blockOffset,
+         std::optional<size_t> blockIndex = {} )
     {
 
         /* Check whether the desired offset is prefetched. */
@@ -561,10 +564,10 @@ public:
         /* Get blocks to prefetch. In order to avoid oscillating caches, the fetching strategy should ony return
          * less than the cache size number of blocks. It is fine if that means no work is being done in the background
          * for some calls to 'get'! */
-        if ( blockIndex == std::numeric_limits<size_t>::max() ) {
+        if ( !blockIndex ) {
             blockIndex = m_blockFinder->find( blockOffset );
         }
-        m_fetchingStrategy.fetch( blockIndex );
+        m_fetchingStrategy.fetch( *blockIndex );
         auto blocksToPrefetch = m_fetchingStrategy.prefetch();
 
         for ( auto blockIndexToPrefetch : blocksToPrefetch ) {
@@ -572,7 +575,7 @@ public:
                 break;
             }
 
-            if ( blockIndexToPrefetch == blockIndex ) {
+            if ( blockIndexToPrefetch == *blockIndex ) {
                 throw std::logic_error( "The fetching strategy should not return the "
                                         "last fetched block for prefetching!" );
             }
@@ -750,18 +753,18 @@ public:
     explicit
     ParallelBZ2Reader( int fileDescriptor ) :
         m_bitReader( fileDescriptor ),
-        m_blockFinder( std::make_shared<BlockFinder>( fileDescriptor, m_parallelisation ) )
+        m_blockFinder( std::make_shared<BlockFinder>( fileDescriptor, m_finderParallelization ) )
     {}
 
     ParallelBZ2Reader( const char*  bz2Data,
                        const size_t size ) :
         m_bitReader( reinterpret_cast<const uint8_t*>( bz2Data ), size ),
-        m_blockFinder( std::make_shared<BlockFinder>( bz2Data, size, m_parallelisation ) )
+        m_blockFinder( std::make_shared<BlockFinder>( bz2Data, size, m_finderParallelization ) )
     {}
 
     ParallelBZ2Reader( const std::string& filePath ) :
         m_bitReader( filePath ),
-        m_blockFinder( std::make_shared<BlockFinder>( filePath, m_parallelisation ) )
+        m_blockFinder( std::make_shared<BlockFinder>( filePath, m_finderParallelization ) )
     {}
 
     /* FileReader overrides */
@@ -828,7 +831,7 @@ public:
         }
 
         if ( !m_blockFetcher ) {
-            m_blockFetcher = std::make_unique<BlockFetcher>( m_bitReader, m_blockFinder, m_parallelisation );
+            m_blockFetcher = std::make_unique<BlockFetcher>( m_bitReader, m_blockFinder, m_fetcherParallelization );
         }
 
         if ( !m_blockFetcher ) {
@@ -1067,9 +1070,14 @@ private:
     std::map<size_t, size_t> m_blockToDataOffsets;
 
 private:
+    size_t const m_fetcherParallelization{ std::max<size_t>( 1U, std::thread::hardware_concurrency() ) };
+    /** The block finder is much faster than the fetcher and therefore does not require es much parallelization! */
+    size_t const m_finderParallelization{ ceilDiv( m_fetcherParallelization, 8U ) };
+
+    /* These are the three larger "sub modules" of ParallelBZ2Reader */
+
     /** Necessary for prefetching decoded blocks in parallel. */
-    const unsigned int m_parallelisation{ std::thread::hardware_concurrency() };
-    std::shared_ptr<BlockFinder> m_blockFinder;
-    const std::shared_ptr<BlockMap> m_blockMap{ std::make_unique<BlockMap>( &m_blockToDataOffsets ) };
-    std::unique_ptr<BlockFetcher> m_blockFetcher;
+    std::shared_ptr<BlockFinder>    m_blockFinder;
+    std::shared_ptr<BlockMap> const m_blockMap{ std::make_unique<BlockMap>( &m_blockToDataOffsets ) };
+    std::unique_ptr<BlockFetcher>   m_blockFetcher;
 };

@@ -47,8 +47,8 @@ testBitStringFinder( uint64_t                          bitStringToFind,
                      const std::vector<unsigned char>& buffer,
                      const std::vector<size_t>&        stringPositions )
 {
-    std::cerr << "\nTest finding bit string 0x" << std::hex << bitStringToFind << std::dec
-              << " of size " << static_cast<int>( bitStringSize ) << " in buffer of size " << buffer.size() << "\n";
+    std::cerr << "Test finding bit string 0x" << std::hex << bitStringToFind << std::dec
+              << " of size " << static_cast<int>( bitStringSize ) << " in buffer of size " << buffer.size() << " B\n";
 
     const auto rawBuffer = reinterpret_cast<const char*>( buffer.data() );
 
@@ -126,13 +126,20 @@ main( void )
     {
         const std::vector<unsigned char> buffer = { 0, 0, 0, 0, 0x31, 0x41, 0x59, 0x26, 0x53, 0x59, 0, 0 };
         const std::vector<size_t> expectedResults = { 32 };
-        for ( const auto offset : { 1, 100, 123, 1024, 2000 } ) {
+
+        const std::vector<char> secondMatchingString = { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 };
+        auto const minSubChunkSize = 4096;
+        /** at this offset the second sub chunk begins and it will actually become multi-threadad */
+        int const specialOffset = minSubChunkSize - buffer.size() - secondMatchingString.size();
+
+        for ( const auto offset : { 1, 100, 123, 1024, 28*1024, 32*1024*1024,
+                                    specialOffset - 1, specialOffset, specialOffset + 1 } ) {
             auto tmpResults = expectedResults;
             tmpResults.push_back( ( buffer.size() + offset ) * CHAR_BIT );
 
             auto tmpBuf = buffer;
             tmpBuf.resize( tmpBuf.size() + offset, 0 );
-            for ( auto c : { 0x31, 0x41, 0x59, 0x26, 0x53, 0x59 } ) {
+            for ( auto c : secondMatchingString ) {
                 tmpBuf.push_back( c );
             }
 

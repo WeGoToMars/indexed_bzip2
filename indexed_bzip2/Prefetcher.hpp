@@ -55,4 +55,8 @@ private:
     size_t m_maxPrefetchCount;
     std::deque<size_t> previousIndexes;
 };
+
+
+/** @todo Add a fetching strategy which avoid full CPU load during frequent seeks (and small reads) by e.g.
+ *        not suggesting anything to prefetch after a sudden jump back. */
 }

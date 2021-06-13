@@ -40,11 +40,11 @@ public:
 public:
     ParallelBitStringFinder( std::string filePath,
                              uint64_t    bitStringToFind,
-                             size_t      parallelisation = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
+                             size_t      parallelization = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
                              size_t      requestedBytes = 0,
                              size_t      fileBufferSizeBytes = 1*1024*1024 ) :
-        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelisation ) ),
-        m_threadPool( parallelisation )
+        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
+        m_threadPool( parallelization )
     {
         this->m_file = std::fopen( filePath.c_str(), "rb" );
         if ( BaseType::seekable() ) {
@@ -54,11 +54,11 @@ public:
 
     ParallelBitStringFinder( int      fileDescriptor,
                              uint64_t bitStringToFind,
-                             size_t   parallelisation = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
+                             size_t   parallelization = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
                              size_t   requestedBytes = 0,
                              size_t   fileBufferSizeBytes = 1*1024*1024 ) :
-        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelisation ) ),
-        m_threadPool( parallelisation )
+        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
+        m_threadPool( parallelization )
     {
         this->m_file = fdopen( dup( fileDescriptor ), "rb" );
         if ( BaseType::seekable() ) {
@@ -100,12 +100,12 @@ private:
     [[nodiscard]] static constexpr size_t
     chunkSize( size_t const fileBufferSizeBytes,
                size_t const requestedBytes,
-               size_t const parallelisation )
+               size_t const parallelization )
     {
         /* This implementation has the limitation that it might at worst try to read as many as bitStringSize
          * bits from the buffered chunk. It makes no sense to remove this limitation. It might slow things down. */
         const auto result = std::max( fileBufferSizeBytes,
-                                      static_cast<size_t>( ceilDiv( bitStringSize, 8 ) ) * parallelisation );
+                                      static_cast<size_t>( ceilDiv( bitStringSize, 8 ) ) * parallelization );
         /* With the current implementation it is impossible to have a chunk size smaller than the requested bytes
          * and have it work for non-seekable inputs. In the worst case, the bit string is at the end, so we have to
          * read almost everything of the next chunk. */
@@ -262,6 +262,11 @@ ParallelBitStringFinder<bitStringSize>::find()
                                             + subChunkStrideInBytes * CHAR_BIT;
             auto const subChunkSizeInBytes = std::min( ceilDiv( subChunkSizeInBits, CHAR_BIT ),
                                                        this->m_buffer.size() - bufferOffsetInBytes );
+
+            //std::cerr << "  Find from offset " << bufferOffsetInBytes << "B " << subChunkOffsetInBits << "b "
+            //          << "sub chunk size " << subChunkSizeInBytes << " B, "
+            //          << "sub chunk stride: " << subChunkStrideInBytes << "B, "
+            //          << "buffer size: " << this->m_buffer.size() << " B\n";
 
             auto& result = m_threadResults.emplace_back();
             result.future = m_threadPool.submitTask( [=, &result] () {
