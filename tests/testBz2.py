@@ -191,7 +191,9 @@ def testBz2( parameters ):
 
     return True
 
-def testPythonInterface():
+def testPythonInterface(parallelization):
+    print("Test Python Interface of IndexedBzip2File for parallelization = ", parallelization)
+
     contents = b"Hello\nWorld!\n"
     rawFile, bz2File = writeBz2File( contents )
     file = IndexedBzip2File( bz2File.name )
@@ -227,8 +229,12 @@ def testPythonInterface():
     assert file.closed
 
 if __name__ == '__main__':
-    testPythonInterface()
+    testPythonInterface(1)
+    testPythonInterface(2)
+    testPythonInterface(3)
+    testPythonInterface(8)
 
+    # TODO Add parallelization parameter for tests! But take care wih the ProcessPoolExecutor to not overload the system
     buffersizes = [ -1, 128, 333, 500, 1024, 1024*1024, 64*1024*1024 ]
     parameters = [
         Bzip2TestParameters( size, encoder, compressionlevel, pattern, patternsize, buffersizes )
@@ -240,6 +246,6 @@ if __name__ == '__main__':
     ]
 
     print( "Will test with", len( parameters ), "different bzip2 files" )
-    with concurrent.futures.ProcessPoolExecutor() as executor:
+    with concurrent.futures.ProcessPoolExecutor( max_workers = max( 1, os.cpu_count() - 2 ) ) as executor:
         for input, output in zip( parameters, executor.map( testBz2, parameters ) ):
             assert output == True

@@ -119,8 +119,8 @@ public:
     Block& operator=( Block&& ) = default;
 
     explicit
-    Block( BitReader bitReader ) :
-        m_bitReader( std::make_unique<BitReader>( std::move( bitReader ) ) )
+    Block( BitReader& bitReader ) :
+        m_bitReader( &bitReader )
     {
         readBlockHeader();
     }
@@ -150,7 +150,7 @@ public:
     BitReader&
     bitReader()
     {
-        if ( m_bitReader ) {
+        if ( m_bitReader != nullptr ) {
             return *m_bitReader;
         }
         throw std::invalid_argument( "Block has not been initialized yet!" );
@@ -243,7 +243,7 @@ public:
     size_t encodedSizeInBits = 0;
 
 private:
-    std::unique_ptr<BitReader> m_bitReader;
+    BitReader* m_bitReader = nullptr;
     bool m_atEndOfStream = false;
     bool m_atEndOfFile = false;
 };

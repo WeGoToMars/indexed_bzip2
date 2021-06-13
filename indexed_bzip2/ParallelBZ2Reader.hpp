@@ -628,7 +628,7 @@ public:
     {
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
-        bzip2::Block block( std::move( bitReader ) );
+        bzip2::Block block( bitReader );
 
         BlockHeaderData result;
         result.encodedOffsetInBits = blockOffset;
@@ -652,7 +652,7 @@ private:
 
         BitReader bitReader( m_bitReader );
         bitReader.seek( blockOffset );
-        bzip2::Block block( std::move( bitReader ) );
+        bzip2::Block block( bitReader );
 
         BlockData result;
         result.encodedOffsetInBits = blockOffset;
