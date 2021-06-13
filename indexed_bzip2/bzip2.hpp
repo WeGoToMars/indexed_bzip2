@@ -14,6 +14,7 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -58,6 +59,38 @@ static constexpr int SYMBOL_RUNB = 1;
 constexpr auto MAGIC_BITS_BLOCK = 0x314159265359ULL; /* bcd(pi) */
 constexpr auto MAGIC_BITS_EOS = 0x177245385090ULL; /* bcd(sqrt(pi)) */
 constexpr auto MAGIC_BITS_SIZE = 48;
+constexpr std::string_view MAGIC_BYTES_BZ2 = "BZh";
+
+
+/**
+ * @return 1..9 representing the bzip2 block size of 100k to 900k
+ */
+inline uint8_t
+readBzip2Header( BitReader& bitReader )
+{
+    for ( const auto magicByte : MAGIC_BYTES_BZ2 ) {
+        const char readByte = bitReader.read<8>();
+        if ( readByte != magicByte ) {
+            std::stringstream msg;
+            msg << "Input header is not BZip2 magic string 'BZh'. Mismatch at bit position "
+                << bitReader.tell() - 8 << " with " << readByte << " (0x" << std::hex << static_cast<int>( readByte )
+                << ") should be " << magicByte;
+            throw std::domain_error( msg.str() );
+        }
+    }
+
+    // Next byte ASCII '1'-'9', indicates block size in units of 100k of
+    // uncompressed data. Allocate intermediate buffer for block.
+    const auto i = bitReader.read<8>();
+    if ( ( i < '1' ) || ( i > '9' ) ) {
+        std::stringstream msg;
+        msg << "Blocksize must be one of '0' (" << std::hex << static_cast<int>( '0' ) << ") ... '9' ("
+            << static_cast<int>( '9' ) << ") but is " << i << " (" << static_cast<int>( i ) << ")";
+        throw std::domain_error( msg.str() );
+    }
+
+    return i - '0';
+}
 
 
 // This is what we know about each huffman coding group

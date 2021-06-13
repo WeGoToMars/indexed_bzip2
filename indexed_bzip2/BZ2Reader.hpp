@@ -211,7 +211,11 @@ private:
 
 protected:
     void
-    readBzip2Header();
+    readBzip2Header()
+    {
+        m_blockSize100k = bzip2::readBzip2Header( m_bitReader );
+        m_calculatedStreamCRC = 0;
+    }
 
 protected:
     BitReader m_bitReader;
@@ -420,33 +424,4 @@ BZ2Reader::decodeStream( int    const outputFileDescriptor,
     }
 
     return nBytesDecoded;
-}
-
-
-inline void
-BZ2Reader::readBzip2Header()
-{
-    // Ensure that file starts with "BZh".
-    for ( auto i = 0; i < 3; i++ ) {
-        const char c = getBits( 8 );
-        if ( c != "BZh"[i] ) {
-            std::stringstream msg;
-            msg << "[BZip2 Header] Input header is not BZip2 magic 'BZh'. Mismatch at bit position "
-            << m_bitReader.tell() - 8 << " with " << c << " (0x" << std::hex << (int)c << ")";
-            throw std::domain_error( msg.str() );
-        }
-    }
-
-    // Next byte ascii '1'-'9', indicates block size in units of 100k of
-    // uncompressed data. Allocate intermediate buffer for block.
-    const auto i = getBits( 8 );
-    if ( ( i < '1' ) || ( i > '9' ) ) {
-        std::stringstream msg;
-        msg << "[BZip2 Header] Blocksize must be one of '0' (" << std::hex << (int)'0' << ") ... '9' (" << (int)'9'
-        << ") but is " << i << " (" << (int)i << ")" << std::dec;
-        throw std::domain_error( msg.str() );
-    }
-    m_blockSize100k = i - '0';
-
-    m_calculatedStreamCRC = 0;
 }

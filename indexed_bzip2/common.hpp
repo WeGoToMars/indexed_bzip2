@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <ctime>
 #include <fstream>
 #include <future>
+#include <iomanip>
+#include <iostream>
 #include <memory>
 #include <ostream>
 #include <thread>
@@ -139,7 +142,12 @@ class ThreadSafeOutput
 public:
     ThreadSafeOutput()
     {
-        m_out << "[" << std::this_thread::get_id() << "]";
+        using namespace std::chrono;
+        const auto time = system_clock::now();
+        const auto timePoint = system_clock::to_time_t( time );
+        const auto subseconds = duration_cast<milliseconds>( time.time_since_epoch() ).count() % 1000;
+        m_out << "[" << std::put_time( std::localtime( &timePoint ), "%H-%M-%S" ) << "." << subseconds << "]"
+              << "[" << std::this_thread::get_id() << "]";
     }
 
     template<typename T>
