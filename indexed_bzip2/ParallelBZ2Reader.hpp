@@ -14,11 +14,10 @@
 #include <utility>
 
 #include "bzip2.hpp"
-#include "BZ2Reader.hpp"
 #include "BitStringFinder.hpp"
-#include "BlockDatabase.hpp"
 #include "Cache.hpp"
 #include "common.hpp"
+#include "FileReader.hpp"
 #include "ParallelBitStringFinder.hpp"
 #include "Prefetcher.hpp"
 #include "ThreadPool.hpp"
@@ -740,30 +739,85 @@ private:
  * @note Calls to this class are not thread-safe! Even though they use threads to evaluate them in parallel.
  */
 class ParallelBZ2Reader :
-    public BZ2Reader
+    public FileReader
 {
 public:
     using BlockFetcher = ::BlockFetcher<FetchingStrategy::FetchNext>;
 
 public:
+    /* Constructors */
+
     explicit
     ParallelBZ2Reader( int fileDescriptor ) :
-        BZ2Reader( fileDescriptor ),
+        m_bitReader( fileDescriptor ),
         m_blockFinder( std::make_shared<BlockFinder>( fileDescriptor, m_parallelisation ) )
     {}
 
     ParallelBZ2Reader( const char*  bz2Data,
                        const size_t size ) :
-        BZ2Reader( bz2Data, size ),
+        m_bitReader( reinterpret_cast<const uint8_t*>( bz2Data ), size ),
         m_blockFinder( std::make_shared<BlockFinder>( bz2Data, size, m_parallelisation ) )
     {}
 
     ParallelBZ2Reader( const std::string& filePath ) :
-        BZ2Reader( filePath ),
+        m_bitReader( filePath ),
         m_blockFinder( std::make_shared<BlockFinder>( filePath, m_parallelisation ) )
     {}
 
-public:
+    /* FileReader overrides */
+
+    int
+    fileno() const override
+    {
+        return ::fileno( m_bitReader.fp() );
+    }
+
+    bool
+    seekable() const override
+    {
+        return m_bitReader.seekable();
+    }
+
+    void
+    close() override
+    {
+        m_blockFetcher = {};
+        m_blockFinder = {};
+        m_bitReader.close();
+    }
+
+    bool
+    closed() const override
+    {
+        return m_bitReader.closed();
+    }
+
+    bool
+    eof() const override
+    {
+        return m_atEndOfFile;
+    }
+
+    size_t
+    tell() const override
+    {
+        if ( m_atEndOfFile ) {
+            return size();
+        }
+        return m_currentPosition;
+    }
+
+    size_t
+    size() const override
+    {
+        if ( !m_blockToDataOffsetsComplete ) {
+            throw std::invalid_argument( "Can't get stream size in BZ2 when not finished reading at least once!" );
+        }
+        return m_blockToDataOffsets.rbegin()->second;
+    }
+
+    /* BZip2 specific methods */
+
     long int
     read( const int    outputFileDescriptor = -1,
           char* const  outputBuffer = nullptr,
@@ -921,6 +975,66 @@ public:
         return tell();
     }
 
+    /* BZip2 specific methods */
+
+    bool
+    blockOffsetsComplete() const
+    {
+        return m_blockToDataOffsetsComplete;
+    }
+
+    /**
+     * @return vectors of block data: offset in file, offset in decoded data
+     *         (cumulative size of all prior decoded blocks).
+     */
+    std::map<size_t, size_t>
+    blockOffsets()
+    {
+        if ( !m_blockToDataOffsetsComplete ) {
+            read();
+        }
+
+        return m_blockToDataOffsets;
+    }
+
+    /**
+     * Same as @ref blockOffsets but it won't force calculation of all blocks and simply returns
+     * what is availabe at call time.
+     * @return vectors of block data: offset in file, offset in decoded data
+     *         (cumulative size of all prior decoded blocks).
+     */
+    std::map<size_t, size_t>
+    availableBlockOffsets()
+    {
+        return m_blockToDataOffsets;
+    }
+
+    void
+    setBlockOffsets( std::map<size_t, size_t> offsets )
+    {
+        if ( offsets.size() < 2 ) {
+            throw std::invalid_argument( "Block offset map must contain at least one valid block and one EOS block!" );
+        }
+        m_blockToDataOffsetsComplete = true;
+        m_blockToDataOffsets = std::move( offsets );
+    }
+
+    /**
+     * @return number of processed bits of compressed bzip2 input file stream
+     * @note Bzip2 is block based and blocks are currently read fully, meaning that the granularity
+     *       of the returned position is ~100-900kB. It's only useful for a rough estimate.
+     */
+    size_t
+    tellCompressed() const
+    {
+
+        const auto blockInfo = m_blockMap->findDataOffset( m_currentPosition );
+        if ( blockInfo.contains( m_currentPosition ) ) {
+            return blockInfo.encodedOffsetInBits;
+        }
+        return 0;
+    }
+
 private:
     size_t
     writeResult( int         const outputFileDescriptor,
@@ -943,9 +1057,19 @@ private:
     }
 
 private:
+    BitReader m_bitReader;
+
+    size_t m_currentPosition = 0; /**< the current position as can only be modified with read or seek calls. */
+    bool m_atEndOfFile = false;
+
+    /** @todo move into BlockMap */
+    bool m_blockToDataOffsetsComplete = false;
+    std::map<size_t, size_t> m_blockToDataOffsets;
+
+private:
     /** Necessary for prefetching decoded blocks in parallel. */
     const unsigned int m_parallelisation{ std::thread::hardware_concurrency() };
-    const std::shared_ptr<BlockFinder> m_blockFinder;
+    std::shared_ptr<BlockFinder> m_blockFinder;
     const std::shared_ptr<BlockMap> m_blockMap{ std::make_unique<BlockMap>( &m_blockToDataOffsets ) };
     std::unique_ptr<BlockFetcher> m_blockFetcher;
 };

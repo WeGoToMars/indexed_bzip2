@@ -26,6 +26,7 @@ cdef extern from "BZ2Reader.hpp":
     cppclass BZ2Reader:
         BZ2Reader(string) except +
         BZ2Reader(int) except +
+
         bool eof() except +
         int fileno() except +
         bool seekable() except +
@@ -33,8 +34,9 @@ cdef extern from "BZ2Reader.hpp":
         bool closed() except +
         size_t seek(lli, int) except +
         size_t tell() except +
-        size_t tellCompressed() except +
         size_t size() except +
+
+        size_t tellCompressed() except +
         int read(int, char*, size_t) except +
         bool blockOffsetsComplete() except +
         map[size_t, size_t] blockOffsets() except +

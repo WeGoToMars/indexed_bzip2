@@ -26,6 +26,8 @@ public:
     static constexpr size_t IOBUF_SIZE = 4096;
 
 public:
+    /* Constructors */
+
     explicit
     BZ2Reader( const std::string& filePath ) :
         m_bitReader( filePath )
@@ -40,6 +42,9 @@ public:
                const size_t size ) :
         m_bitReader( reinterpret_cast<const uint8_t*>( bz2Data ), size )
     {}
+
+
+    /* FileReader overrides */
 
     int
     fileno() const override
@@ -65,16 +70,41 @@ public:
         return m_bitReader.closed();
     }
 
-    uint32_t
-    crc() const
-    {
-        return m_calculatedStreamCRC;
-    }
-
     bool
     eof() const override
     {
         return m_atEndOfFile;
+    }
+
+    size_t
+    tell() const override
+    {
+        if ( m_atEndOfFile ) {
+            return size();
+        }
+        return m_currentPosition;
+    }
+
+    size_t
+    size() const override
+    {
+        if ( !m_blockToDataOffsetsComplete ) {
+            throw std::invalid_argument( "Can't get stream size in BZ2 when not finished reading at least once!" );
+        }
+        return m_blockToDataOffsets.rbegin()->second;
+    }
+
+    size_t
+    seek( long long int offset,
+          int           origin = SEEK_SET ) override;
+
+
+    /* BZip2 specific methods */
+
+    uint32_t
+    crc() const
+    {
+        return m_calculatedStreamCRC;
     }
 
     bool
@@ -119,15 +149,6 @@ public:
         m_blockToDataOffsets = std::move( offsets );
     }
 
-    size_t
-    tell() const override
-    {
-        if ( m_atEndOfFile ) {
-            return size();
-        }
-        return m_currentPosition;
-    }
-
     /**
      * @return number of processed bits of compressed bzip2 input file stream
      * @note Bzip2 is block based and blocks are currently read fully, meaning that the granularity
@@ -138,19 +159,6 @@ public:
     {
         return m_bitReader.tell();
     }
-
-    size_t
-    size() const override
-    {
-        if ( !m_blockToDataOffsetsComplete ) {
-            throw std::invalid_argument( "Can't get stream size in BZ2 when not finished reading at least once!" );
-        }
-        return m_blockToDataOffsets.rbegin()->second;
-    }
-
-    size_t
-    seek( long long int offset,
-          int           origin = SEEK_SET ) override;
 
     /**
      * @param[out] outputBuffer should at least be large enough to hold @p nBytesToRead bytes

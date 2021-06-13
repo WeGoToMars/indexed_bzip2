@@ -4,6 +4,12 @@ target_link_libraries(testBitStringFinder PRIVATE indexed_bzip2_parallel)
 add_test(NAME "Test Bit String Finder" COMMAND testBitStringFinder)
 add_dependencies(check testBitStringFinder)
 
+add_executable(testParallelBitStringFinder)
+target_sources(testParallelBitStringFinder PRIVATE ${CMAKE_CURRENT_LIST_DIR}/testParallelBitStringFinder.cpp)
+target_link_libraries(testParallelBitStringFinder PRIVATE indexed_bzip2_parallel)
+add_test(NAME "Test Parallel Bit String Finder" COMMAND testParallelBitStringFinder)
+add_dependencies(check testParallelBitStringFinder)
+
 add_executable(testThreadPool)
 target_sources(testThreadPool PRIVATE ${CMAKE_CURRENT_LIST_DIR}/testThreadPool.cpp)
 target_link_libraries(testThreadPool PRIVATE indexed_bzip2_parallel)
