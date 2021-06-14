@@ -168,6 +168,7 @@ class BlockFinder
 {
 public:
     using BitStringFinder = ParallelBitStringFinder<bzip2::MAGIC_BITS_SIZE>;
+    using BlockOffsets = StreamedResults<size_t>::Values;
 
 public:
     explicit
@@ -270,7 +271,7 @@ public:
     }
 
     void
-    setBlockOffsets( StreamedResults<size_t>::Values blockOffsets )
+    setBlockOffsets( BlockOffsets blockOffsets )
     {
         /* First we need to cancel the asynchronous block finder thread. */
         {
@@ -1120,6 +1121,23 @@ public:
     void
     setBlockOffsets( std::map<size_t, size_t> offsets ) override
     {
+        if ( offsets.empty() ) {
+            throw std::invalid_argument( "May not clear offsets. Construct a new ParallelBZ2Reader instead!" );
+        }
+
+        BlockFinder::BlockOffsets encodedBlockOffsets;
+        for ( auto it = offsets.begin(), nit = std::next( offsets.begin() ); nit != offsets.end(); ++it, ++nit )
+        {
+            /* Ignore blocks with no data, i.e., EOS blocks. */
+            if ( it->second != nit->second ) {
+                encodedBlockOffsets.push_back( it->first );
+            }
+        }
+        /* The last block is not pushed because "std::next( it )" is end but last block must be EOS anyways
+         * or else BlockMap will not work correctly because the implied size of that last block is 0! */
+
+        m_blockFinder->setBlockOffsets( std::move( encodedBlockOffsets ) );
+
         if ( offsets.size() < 2 ) {
             throw std::invalid_argument( "Block offset map must contain at least one valid block and one EOS block!" );
         }
