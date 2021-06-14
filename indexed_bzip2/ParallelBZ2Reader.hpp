@@ -379,15 +379,7 @@ public:
     };
 
 public:
-    /** BlockFinder is used to determine which blocks exist and which are still missing! */
-    BlockMap( std::map<size_t, size_t>* blockToDataOffsets ) :
-        m_blockToDataOffsets( blockToDataOffsets )
-    {
-        if ( m_blockToDataOffsets == nullptr ) {
-            throw std::invalid_argument( "May not give invalid pointers as arguments!" );
-        }
-    }
-
+    BlockMap() = default;
 
     void
     insert( size_t encodedBlockOffset,
@@ -396,16 +388,20 @@ public:
     {
         std::scoped_lock lock( m_mutex );
 
+        if ( m_finalized ) {
+            throw std::invalid_argument( "May not insert into finalized block map!" );
+        }
+
         std::optional<size_t> decodedOffset;
-        if ( m_blockToDataOffsets->empty() ) {
+        if ( m_blockToDataOffsets.empty() ) {
             decodedOffset = 0;
-        } else if ( encodedBlockOffset > m_blockToDataOffsets->rbegin()->first ) {
-            decodedOffset = m_blockToDataOffsets->rbegin()->second + m_lastBlockDecodedSize;
+        } else if ( encodedBlockOffset > m_blockToDataOffsets.rbegin()->first ) {
+            decodedOffset = m_blockToDataOffsets.rbegin()->second + m_lastBlockDecodedSize;
         }
 
         /* If successive value or empty, then simply append */
         if ( decodedOffset ) {
-            m_blockToDataOffsets->emplace( encodedBlockOffset, *decodedOffset );
+            m_blockToDataOffsets.emplace( encodedBlockOffset, *decodedOffset );
             m_lastBlockDecodedSize = decodedSize;
             m_lastBlockEncodedSize = encodedSize;
             return;
@@ -413,13 +409,13 @@ public:
 
         /* Generally, block inserted offsets should always be increasing!
          * But do ignore duplicates after confirming that there is no data inconsistency. */
-        const auto match = m_blockToDataOffsets->find( encodedBlockOffset );
+        const auto match = m_blockToDataOffsets.find( encodedBlockOffset );
 
-        if ( match == m_blockToDataOffsets->end() ) {
+        if ( match == m_blockToDataOffsets.end() ) {
             throw std::invalid_argument( "Inserted block offsets should be strictly increasing!" );
         }
 
-        if ( std::next( match ) == m_blockToDataOffsets->end() ) {
+        if ( std::next( match ) == m_blockToDataOffsets.end() ) {
             throw std::logic_error( "This case should already be handled with the first if clause!" );
         }
 
@@ -446,10 +442,10 @@ public:
         /** @todo because map iterators are not random access iterators and because the comparison operator
          * is not very time-consuming, it's probably still effectively linear complexity. */
         const auto blockOffset = std::lower_bound(
-            m_blockToDataOffsets->rbegin(), m_blockToDataOffsets->rend(), std::make_pair( 0, dataOffset ),
+            m_blockToDataOffsets.rbegin(), m_blockToDataOffsets.rend(), std::make_pair( 0, dataOffset ),
             [] ( std::pair<size_t, size_t> a, std::pair<size_t, size_t> b ) { return a.second > b.second; } );
 
-        if ( blockOffset == m_blockToDataOffsets->rend() ) {
+        if ( blockOffset == m_blockToDataOffsets.rend() ) {
             return result;
         }
 
@@ -460,9 +456,9 @@ public:
         result.encodedOffsetInBits = blockOffset->first;
         result.decodedOffsetInBytes = blockOffset->second;
         /** @todo O(n) */
-        result.blockIndex = std::distance( blockOffset, m_blockToDataOffsets->rend() ) - 1;
+        result.blockIndex = std::distance( blockOffset, m_blockToDataOffsets.rend() ) - 1;
 
-        if ( blockOffset == m_blockToDataOffsets->rbegin() ) {
+        if ( blockOffset == m_blockToDataOffsets.rbegin() ) {
             result.decodedSizeInBytes = m_lastBlockDecodedSize;
             result.encodedSizeInBits = m_lastBlockEncodedSize;
         } else {
@@ -477,22 +473,62 @@ public:
         return result;
     }
 
-
     [[nodiscard]] size_t
     blockCount() const
     {
         std::scoped_lock lock( m_mutex );
-        return m_blockToDataOffsets->size();
+        return m_blockToDataOffsets.size();
+    }
+
+    void
+    finalize()
+    {
+        std::scoped_lock lock( m_mutex );
+        m_finalized = true;
+    }
+
+    [[nodiscard]] bool
+    finalized() const
+    {
+        std::scoped_lock lock( m_mutex );
+        return m_finalized;
+    }
+
+    void
+    setBlockOffsets( std::map<size_t, size_t> blockOffsets )
+    {
+        std::scoped_lock lock( m_mutex );
+        m_blockToDataOffsets = std::move( blockOffsets );
+        m_finalized = true;
+    }
+
+    [[nodiscard]] std::map<size_t, size_t>
+    blockOffsets() const
+    {
+        std::scoped_lock lock( m_mutex );
+        return m_blockToDataOffsets;
+    }
+
+    [[nodiscard]] std::pair<size_t, size_t>
+    back() const
+    {
+        std::scoped_lock lock( m_mutex );
+
+        if ( m_blockToDataOffsets.empty() ) {
+            throw std::out_of_range( "Can not return last element of empty block map!" );
+        }
+        return *m_blockToDataOffsets.rbegin();
     }
 
 private:
+    mutable std::mutex m_mutex;
+
     /** If complete, the last block will be of size 0 and indicate the end of stream! */
-    std::map<size_t, size_t>* const m_blockToDataOffsets;
+    std::map<size_t, size_t> m_blockToDataOffsets;
+    bool m_finalized{ false };
 
     size_t m_lastBlockEncodedSize{ 0 }; /**< Encoded block size of m_blockToDataOffsets.rbegin() */
     size_t m_lastBlockDecodedSize{ 0 }; /**< Decoded block size of m_blockToDataOffsets.rbegin() */
-
-    mutable std::mutex m_mutex;
 };
 
 
@@ -872,10 +908,10 @@ public:
     size_t
     size() const override
     {
-        if ( !m_blockToDataOffsetsComplete ) {
+        if ( !m_blockMap->finalized() ) {
             throw std::invalid_argument( "Can't get stream size in BZ2 when not finished reading at least once!" );
         }
-        return m_blockToDataOffsets.rbegin()->second;
+        return m_blockMap->back().second;
     }
 
     /* BZ2ReaderInterface overrides */
@@ -912,7 +948,7 @@ public:
                 const auto blockIndex = m_blockMap->blockCount();
                 const auto encodedOffsetInBits = m_blockFinder->get( blockIndex );
                 if ( !encodedOffsetInBits ) {
-                    m_blockToDataOffsetsComplete = true;
+                    m_blockMap->finalize();
                     m_atEndOfFile = true;
                     break;
                 }
@@ -990,7 +1026,7 @@ public:
             break;
         case SEEK_END:
             /* size() requires the block offsets to be available! */
-            if ( !m_blockToDataOffsetsComplete ) {
+            if ( !m_blockMap->finalized() ) {
                 read();
             }
             offset = size() + offset;
@@ -1024,10 +1060,9 @@ public:
             return tell();
         }
 
-        /** @todo Move m_blockToDataOffsetsComplete into BlockMap and lock everything in this seek function? */
         assert( static_cast<size_t>( offset ) - blockInfo.decodedOffsetInBytes > blockInfo.decodedSizeInBytes );
-        if ( m_blockToDataOffsetsComplete ) {
-        #if 0
+        if ( m_blockMap->finalized() ) {
+        #if 0 /** @todo why is this not working!? */
             m_currentPosition = offset;
             return tell();
         #endif
@@ -1050,7 +1085,7 @@ public:
     bool
     blockOffsetsComplete() const override
     {
-        return m_blockToDataOffsetsComplete;
+        return m_blockMap->finalized();
     }
 
     /**
@@ -1060,11 +1095,14 @@ public:
     std::map<size_t, size_t>
     blockOffsets() override
     {
-        if ( !m_blockToDataOffsetsComplete ) {
+        if ( !m_blockMap->finalized() ) {
             read();
+            if ( !m_blockMap->finalized() ) {
+                throw std::logic_error( "Reading everything should have finalized the block map!" );
+            }
         }
 
-        return m_blockToDataOffsets;
+        return m_blockMap->blockOffsets();
     }
 
     /**
@@ -1076,7 +1114,7 @@ public:
     std::map<size_t, size_t>
     availableBlockOffsets() const override
     {
-        return m_blockToDataOffsets;
+        return m_blockMap->blockOffsets();
     }
 
     void
@@ -1085,8 +1123,7 @@ public:
         if ( offsets.size() < 2 ) {
             throw std::invalid_argument( "Block offset map must contain at least one valid block and one EOS block!" );
         }
-        m_blockToDataOffsetsComplete = true;
-        m_blockToDataOffsets = std::move( offsets );
+        m_blockMap->setBlockOffsets( std::move( offsets ) );
     }
 
     /**
@@ -1132,10 +1169,6 @@ private:
     size_t m_currentPosition = 0; /**< the current position as can only be modified with read or seek calls. */
     bool m_atEndOfFile = false;
 
-    /** @todo move into BlockMap */
-    bool m_blockToDataOffsetsComplete = false;
-    std::map<size_t, size_t> m_blockToDataOffsets;
-
 private:
     size_t const m_fetcherParallelization;
     /** The block finder is much faster than the fetcher and therefore does not require es much parallelization! */
@@ -1145,6 +1178,6 @@ private:
 
     /** Necessary for prefetching decoded blocks in parallel. */
     std::shared_ptr<BlockFinder>    m_blockFinder;
-    std::shared_ptr<BlockMap> const m_blockMap{ std::make_unique<BlockMap>( &m_blockToDataOffsets ) };
+    std::shared_ptr<BlockMap> const m_blockMap{ std::make_unique<BlockMap>() };
     std::unique_ptr<BlockFetcher>   m_blockFetcher;
 };
