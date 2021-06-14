@@ -37,12 +37,15 @@ class ParallelBitStringFinder :
 public:
     using BaseType = BitStringFinder<bitStringSize>;
 
+    static_assert( bitStringSize > 0, "Bit string to find must have positive length!" );
+
 public:
-    ParallelBitStringFinder( std::string filePath,
-                             uint64_t    bitStringToFind,
-                             size_t      parallelization = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
-                             size_t      requestedBytes = 0,
-                             size_t      fileBufferSizeBytes = 1*1024*1024 ) :
+    ParallelBitStringFinder( std::string const& filePath,
+                             uint64_t           bitStringToFind,
+                             size_t             parallelization = std::max( 1U,
+                                                                            std::thread::hardware_concurrency() / 8U ),
+                             size_t             requestedBytes = 0,
+                             size_t             fileBufferSizeBytes = 1*1024*1024 ) :
         BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
         m_threadPool( parallelization )
     {
@@ -189,10 +192,6 @@ template<uint8_t bitStringSize>
 size_t
 ParallelBitStringFinder<bitStringSize>::find()
 {
-    if ( bitStringSize == 0 ) {
-        return std::numeric_limits<size_t>::max();
-    }
-
     while ( !BaseType::eof() || !m_threadResults.empty() )
     {
         /* Check whether there are results available and return those. Take care to return results in order! */
@@ -202,8 +201,8 @@ ParallelBitStringFinder<bitStringSize>::find()
 
             /* Check if some results are already calculated. No locking necessary between the queue empty check
              * and the future valid check because only we can make it invalid when calling get on it. */
-            for( std::unique_lock<std::mutex> lock( result.mutex );
-                 !result.foundOffsets.empty() || result.future.valid(); ) {
+            std::unique_lock<std::mutex> lock( result.mutex );
+            while ( !result.foundOffsets.empty() || result.future.valid() ) {
                 /* In the easiest case we have something to return already. */
                 if ( !result.foundOffsets.empty() ) {
                     if ( result.foundOffsets.front() == std::numeric_limits<size_t>::max() ) {
@@ -230,6 +229,7 @@ ParallelBitStringFinder<bitStringSize>::find()
                     result.future.get();
                 }
             }
+            lock = {};  /* release result.mutex before popping result! */
 
             if ( result.future.valid() || !result.foundOffsets.empty() ) {
                 throw std::logic_error( "Should have gotten future and emptied offsets!" );

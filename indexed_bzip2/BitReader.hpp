@@ -109,38 +109,8 @@ public:
         other.m_file = nullptr;
     }
 
-#if 0
-    BitReader&
-    operator=( BitReader&& other )
-    {
-        m_filePath = std::move( other.m_filePath );
-        m_fileDescriptor = other.m_fileDescriptor;
-        m_file = other.m_file;
-        m_seekable = other.m_seekable;
-        m_fileSizeBytes = other.m_fileSizeBytes;
-        m_offsetBits = other.m_offsetBits;
-        m_inbuf = std::move( other.m_inbuf );
-        m_inbufPos = other.m_inbufPos;
-        m_lastReadSuccessful = other.m_lastReadSuccessful;
-
-        /* This is the whole reason why this move constructor can't use the default implementation!
-         * Without this, 'other' would close the file pointer which we copied to us in its destructor! */
-        other.m_file = nullptr;
-
-        return *this;
-    }
-
-    BitReader&
-    operator=( const BitReader& other )
-    {
-        /* Emulate assignment by using copy constructor and move assignment. */
-        *this = BitReader( other );
-        return *this;
-    }
-#else
     BitReader& operator=( BitReader&& other ) = delete;
     BitReader& operator=( const BitReader& other ) = delete;
-#endif
 
     /**
      * Copy constructor. As far as I know, there is no stable way to open a completely new independent
@@ -187,19 +157,19 @@ public:
     }
 
     bool
-    eof() const override
+    eof() const final
     {
         return m_seekable ? tell() >= size() : !m_lastReadSuccessful;
     }
 
     bool
-    seekable() const override
+    seekable() const final
     {
         return m_seekable;
     }
 
     void
-    close() override
+    close() final
     {
         fclose( fp() );
         m_file = nullptr;
@@ -207,7 +177,7 @@ public:
     }
 
     bool
-    closed() const override
+    closed() const final
     {
         return ( m_file == nullptr ) && m_inbuf.empty();
     }
@@ -269,7 +239,7 @@ public:
      * @return current position / number of bits already read.
      */
     size_t
-    tell() const override
+    tell() const final
     {
         if ( m_seekable ) {
             return ( ftell( fp() ) - m_inbuf.size() + m_inbufPos ) * 8ULL - m_inbufBitCount - m_offsetBits;
@@ -284,7 +254,7 @@ public:
     }
 
     int
-    fileno() const override
+    fileno() const final
     {
         if ( m_file == nullptr ) {
             throw std::invalid_argument( "The file is not open!" );
@@ -294,10 +264,10 @@ public:
 
     size_t
     seek( long long int offsetBits,
-          int           origin = SEEK_SET ) override;
+          int           origin = SEEK_SET ) final;
 
     size_t
-    size() const override
+    size() const final
     {
         return m_fileSizeBytes * 8 - m_offsetBits;
     }

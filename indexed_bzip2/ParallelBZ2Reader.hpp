@@ -195,18 +195,8 @@ public:
 
     ~BlockFinder()
     {
-        m_cancelThread = true;
-
-        if constexpr ( m_debugOutput ) {
-            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Destructor!" ).str();
-        }
-
         std::scoped_lock lock( m_mutex );
-
-        if constexpr ( m_debugOutput ) {
-            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Cancel thread!" ).str();
-        }
-
+        m_cancelThread = true;
         m_changed.notify_all();
     }
 
@@ -293,10 +283,6 @@ private:
     void
     blockFinderMain()
     {
-        if constexpr ( m_debugOutput ) {
-            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Boot" ).str();
-        }
-
         while ( !m_cancelThread ) {
             std::unique_lock lock( m_mutex );
             /* m_blockOffsets.size() will only grow, so we don't need to be notified when it changes! */
@@ -320,10 +306,6 @@ private:
         }
 
         m_blockOffsets.finalize();
-
-        if ( m_debugOutput ) {
-            std::cerr << ( ThreadSafeOutput() << "[Block Finder] Found" << m_blockOffsets.size() << "blocks" ).str();
-        }
     }
 
 private:
@@ -344,7 +326,6 @@ private:
 
     std::unique_ptr<BitStringFinder> m_bitStringFinder;
     std::atomic<bool> m_cancelThread{ false };
-    static constexpr bool m_debugOutput = false;
 
     std::unique_ptr<JoiningThread> m_blockFinder;
 };
@@ -574,23 +555,22 @@ public:
 
     ~BlockFetcher()
     {
-        if constexpr( m_debugOutput ) {
-            const auto cacheHitRate = ( m_cache.hits() + m_prefetchDirectHits )
-                                      / static_cast<double>( m_cache.hits() + m_cache.misses() + m_prefetchDirectHits );
-            std::cerr << (
-                ThreadSafeOutput() << "[BlockFetcher::~BlockFetcher]"
-                << "\n   Cache hits                 :" << m_cache.hits()
-                << "\n   misses                     :" << m_cache.misses()
-                << "\n   prefetched blocks          :" << m_prefetchCount
-                << "\n   direct prefetch queue hits :" << m_prefetchDirectHits
-                << "\n   hit rate                   :" << cacheHitRate
-                << "\n   time spent in:"
-                << "\n       bzip2::readBlockData          :" << m_readBlockDataTotalTime << "s"
-                << "\n       time spent in decodeBlock     :" << m_decodeBlockTotalTime   << "s"
-                << "\n       time spent waiting on futures :" << m_futureWaitTotalTime    << "s"
-            ).str();
-
-        }
+#if 0
+        const auto cacheHitRate = ( m_cache.hits() + m_prefetchDirectHits )
+                                  / static_cast<double>( m_cache.hits() + m_cache.misses() + m_prefetchDirectHits );
+        std::cerr << (
+            ThreadSafeOutput() << "[BlockFetcher::~BlockFetcher]"
+            << "\n   Cache hits                 :" << m_cache.hits()
+            << "\n   misses                     :" << m_cache.misses()
+            << "\n   prefetched blocks          :" << m_prefetchCount
+            << "\n   direct prefetch queue hits :" << m_prefetchDirectHits
+            << "\n   hit rate                   :" << cacheHitRate
+            << "\n   time spent in:"
+            << "\n       bzip2::readBlockData          :" << m_readBlockDataTotalTime << "s"
+            << "\n       time spent in decodeBlock     :" << m_decodeBlockTotalTime   << "s"
+            << "\n       time spent waiting on futures :" << m_futureWaitTotalTime    << "s"
+        ).str();
+#endif
 
         m_cancelThreads = true;
         m_cancelThreadsCondition.notify_all();
@@ -608,7 +588,7 @@ public:
         std::future<BlockData> resultFuture;
         const auto match = std::find_if(
             m_prefetching.begin(), m_prefetching.end(),
-            [blockOffset] ( auto& kv ){ return kv.first == blockOffset; }
+            [blockOffset] ( auto const& kv ){ return kv.first == blockOffset; }
         );
 
         if ( match != m_prefetching.end() ) {
@@ -793,8 +773,6 @@ private:
     }
 
 private:
-    static constexpr bool m_debugOutput{ false };
-
     /* Analytics */
     size_t m_prefetchCount{ 0 };
     size_t m_prefetchDirectHits{ 0 };
@@ -854,6 +832,7 @@ public:
         m_blockFinder( std::make_shared<BlockFinder>( bz2Data, size, m_finderParallelization ) )
     {}
 
+    explicit
     ParallelBZ2Reader( const std::string& filePath,
                        size_t             parallelization = 0 ) :
         m_bitReader( filePath ),

@@ -74,6 +74,7 @@ public:
     using CacheDataType = std::map<Key, Value >;
 
 public:
+    explicit
     Cache( size_t maxCacheSize ) :
         m_maxCacheSize( maxCacheSize )
     {}

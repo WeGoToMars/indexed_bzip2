@@ -35,9 +35,9 @@ requireEqual( const T& a, const T& b, int line )
 
 
 void
-require( bool        condition,
-         std::string conditionString,
-         int         line )
+require( bool               condition,
+         std::string const& conditionString,
+         int                line )
 {
     ++gnTests;
     if ( !condition ) {

@@ -47,7 +47,7 @@ jobs:
       run: |
         set -o pipefail
         cppcheck --enable=all --std=c++17 --suppress=unusedFunction --suppress=useStlAlgorithm -I indexed_bzip2 tests/ indexed_bzip2/*hpp 2>&1 | tee cppcheck.log
-        if grep -E -i '(style:|warning:|error:) .* \[[^]]*\]$' cppcheck.log; then
+        if grep -E -i '(warning:|error:) .* \[[^]]*\]$' cppcheck.log; then
             echo -e '\e[31mThere were errors while running cppcheck!\e[0m'
             exit 1
         fi

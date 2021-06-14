@@ -209,12 +209,6 @@ private:
                   char*  outputBuffer         = nullptr,
                   size_t nMaxBytesToDecode    = std::numeric_limits<size_t>::max() );
 
-    uint32_t
-    getBits( uint8_t nBits )
-    {
-        return m_bitReader.read( nBits );
-    }
-
     BlockHeader
     readBlockHeader( size_t bitsOffset );
 
