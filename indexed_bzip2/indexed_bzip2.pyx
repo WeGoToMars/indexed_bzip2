@@ -133,6 +133,9 @@ cdef class _IndexedBzip2FileParallel():
         else:
             self.bz2reader = new ParallelBZ2Reader(<int>fileNameOrDescriptor, <int>parallelization)
 
+    def __init__(self, *args, **kwargs):
+        pass
+
     def __dealloc__(self):
         del self.bz2reader
 
@@ -189,7 +192,8 @@ cdef class _IndexedBzip2FileParallel():
 
 class IndexedBzip2FileRaw(io.RawIOBase):
     def __init__(self, filename, parallelization = 1):
-        self.bz2reader = _IndexedBzip2File(filename) if parallelization == 1 else _IndexedBzip2FileParallel(filename)
+        self.bz2reader = _IndexedBzip2File(filename) if parallelization == 1 \
+                         else _IndexedBzip2FileParallel(filename, parallelization)
         self.name = filename
         self.mode = 'rb'
 

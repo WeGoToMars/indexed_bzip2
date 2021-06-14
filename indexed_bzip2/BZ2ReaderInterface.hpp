@@ -43,7 +43,7 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     virtual std::map<size_t, size_t>
-    availableBlockOffsets() = 0;
+    availableBlockOffsets() const = 0;
 
     virtual void
     setBlockOffsets( std::map<size_t, size_t> offsets ) = 0;

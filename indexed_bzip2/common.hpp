@@ -105,6 +105,20 @@ fileExists( const char* filePath )
 }
 
 
+inline FILE*
+throwingOpen( const std::string& filePath,
+              const char*        mode )
+{
+    auto* file = fopen( filePath.c_str(), mode );
+    if ( file == nullptr ) {
+        std::stringstream msg;
+        msg << "Opening file '" << filePath << " failed!";
+        throw std::invalid_argument( msg.str() );
+    }
+    return file;
+}
+
+
 using unique_file_ptr = std::unique_ptr<FILE, std::function<void( FILE* )> >;
 
 inline unique_file_ptr

@@ -135,7 +135,7 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    availableBlockOffsets() override
+    availableBlockOffsets() const override
     {
         return m_blockToDataOffsets;
     }

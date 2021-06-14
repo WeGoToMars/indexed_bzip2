@@ -46,7 +46,7 @@ public:
         BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
         m_threadPool( parallelization )
     {
-        this->m_file = std::fopen( filePath.c_str(), "rb" );
+        this->m_file = throwingOpen( filePath, "rb" );
         if ( BaseType::seekable() ) {
             fseek( this->m_file, 0, SEEK_SET );
         }
@@ -73,6 +73,8 @@ public:
     {
         this->m_buffer.assign( buffer, buffer + size );
     }
+
+    virtual ~ParallelBitStringFinder() = default;
 
     /**
      * @return the next match and the requested bytes or nullopt if at end of file.
@@ -200,8 +202,8 @@ ParallelBitStringFinder<bitStringSize>::find()
 
             /* Check if some results are already calculated. No locking necessary between the queue empty check
              * and the future valid check because only we can make it invalid when calling get on it. */
-            std::unique_lock<std::mutex> lock( result.mutex );
-            while( !result.foundOffsets.empty() || result.future.valid() ) {
+            for( std::unique_lock<std::mutex> lock( result.mutex );
+                 !result.foundOffsets.empty() || result.future.valid(); ) {
                 /* In the easiest case we have something to return already. */
                 if ( !result.foundOffsets.empty() ) {
                     if ( result.foundOffsets.front() == std::numeric_limits<size_t>::max() ) {

@@ -60,7 +60,7 @@ public:
         BitStringFinder( bitStringToFind, fileBufferSizeBytes )
     {
         /** dup is not strong enough to be able to independently seek in the old and the dup'ed fd! */
-        m_file = std::fopen( fdFilePath( fileDescriptor ).c_str(), "rb" );
+        m_file = throwingOpen( fdFilePath( fileDescriptor ), "rb" );
         if ( seekable() ) {
             fseek( m_file, 0, SEEK_SET );
         }
@@ -73,6 +73,8 @@ public:
     {
         m_buffer.assign( buffer, buffer + size );
     }
+
+    virtual ~BitStringFinder() = default;
 
     [[nodiscard]] bool
     seekable() const

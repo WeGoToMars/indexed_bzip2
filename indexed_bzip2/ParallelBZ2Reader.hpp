@@ -110,6 +110,11 @@ public:
     push( Value value )
     {
         std::scoped_lock lock( m_mutex );
+
+        if ( m_finalized ) {
+            throw std::invalid_argument( "You may not push to finalized StreamedResults!" );
+        }
+
         m_results.emplace_back( std::move( value ) );
         m_changed.notify_all();
     }
@@ -136,6 +141,15 @@ public:
         return ResultsView( &m_results, &m_mutex );
     }
 
+    void
+    setResults( Values results )
+    {
+        std::scoped_lock lock( m_mutex );
+
+        m_results = std::move( results );
+        m_finalized = true;
+        m_changed.notify_all();
+    }
 
 private:
     mutable std::mutex m_mutex;
@@ -153,23 +167,29 @@ private:
 class BlockFinder
 {
 public:
+    using BitStringFinder = ParallelBitStringFinder<bzip2::MAGIC_BITS_SIZE>;
+
+public:
     explicit
     BlockFinder( int    fileDescriptor,
                  size_t parallelization ) :
-        m_bitStringFinder( fileDescriptor, bzip2::MAGIC_BITS_BLOCK, parallelization )
+        m_bitStringFinder(
+            std::make_unique<BitStringFinder>( fileDescriptor, bzip2::MAGIC_BITS_BLOCK, parallelization ) )
     {}
 
     explicit
     BlockFinder( char const* buffer,
                  size_t      size,
                  size_t      parallelization ) :
-        m_bitStringFinder( buffer, size, bzip2::MAGIC_BITS_BLOCK, parallelization )
+        m_bitStringFinder(
+            std::make_unique<BitStringFinder>( buffer, size, bzip2::MAGIC_BITS_BLOCK, parallelization ) )
     {}
 
     explicit
     BlockFinder( std::string const& filePath,
                  size_t             parallelization ) :
-        m_bitStringFinder( filePath, bzip2::MAGIC_BITS_BLOCK, parallelization )
+        m_bitStringFinder(
+            std::make_unique<BitStringFinder>( filePath, bzip2::MAGIC_BITS_BLOCK, parallelization ) )
     {}
 
     ~BlockFinder()
@@ -190,6 +210,14 @@ public:
     }
 
 public:
+    void
+    start()
+    {
+        if ( !m_blockFinder ) {
+            m_blockFinder = std::make_unique<JoiningThread>( &BlockFinder::blockFinderMain, this );
+        }
+    }
+
     [[nodiscard]] size_t
     size() const
     {
@@ -211,6 +239,8 @@ public:
     get( size_t blockNumber,
          double timeoutInSeconds = std::numeric_limits<double>::infinity() )
     {
+        start();
+
         {
             std::scoped_lock lock( m_mutex );
             m_highestRequestedBlockNumber = std::max( m_highestRequestedBlockNumber, blockNumber );
@@ -239,6 +269,25 @@ public:
         return std::distance( blockOffsets.begin(), match );
     }
 
+    void
+    setBlockOffsets( StreamedResults<size_t>::Values blockOffsets )
+    {
+        /* First we need to cancel the asynchronous block finder thread. */
+        {
+            std::scoped_lock lock( m_mutex );
+            m_cancelThread = true;
+            m_changed.notify_all();
+        }
+
+        if ( m_blockFinder && m_blockFinder->joinable() ) {
+            m_blockFinder->join();
+        }
+        m_bitStringFinder = {};
+
+        /* Setting the results also finalizes them. No locking necessary because all threads have shut down. */
+        m_blockOffsets.setResults( std::move( blockOffsets ) );
+    }
+
 private:
     void
     blockFinderMain()
@@ -259,7 +308,7 @@ private:
 
             /* Assuming a valid BZ2 file, the time for this find method should be bounded and
              * responsive enough when reacting to cancelations. */
-            const auto blockOffset = m_bitStringFinder.find();
+            const auto blockOffset = m_bitStringFinder->find();
             if ( blockOffset == std::numeric_limits<size_t>::max() ) {
                 break;
             }
@@ -292,11 +341,11 @@ private:
      */
     const size_t m_prefetchCount = 3 * std::thread::hardware_concurrency();
 
-    ParallelBitStringFinder<bzip2::MAGIC_BITS_SIZE> m_bitStringFinder;
+    std::unique_ptr<BitStringFinder> m_bitStringFinder;
     std::atomic<bool> m_cancelThread{ false };
-    static constexpr bool m_debugOutput = true;
+    static constexpr bool m_debugOutput = false;
 
-    JoiningThread m_blockFinder{ &BlockFinder::blockFinderMain, this };
+    std::unique_ptr<JoiningThread> m_blockFinder;
 };
 
 
@@ -443,8 +492,6 @@ private:
     size_t m_lastBlockEncodedSize{ 0 }; /**< Encoded block size of m_blockToDataOffsets.rbegin() */
     size_t m_lastBlockDecodedSize{ 0 }; /**< Decoded block size of m_blockToDataOffsets.rbegin() */
 
-    size_t m_highestDataOffset{ 0 }; /**< used only for sanity check. */
-
     mutable std::mutex m_mutex;
 };
 
@@ -583,15 +630,15 @@ public:
 
             /* Do not prefetch already cached/prefetched blocks or block indexes which are not yet in the block map. */
             const auto prefetchBlockOffset = m_blockFinder->get( blockIndexToPrefetch, 0 );
-            if ( ( m_prefetching.find( *prefetchBlockOffset ) != m_prefetching.end() )
-                 || !prefetchBlockOffset.has_value()
+            if ( !prefetchBlockOffset.has_value()
+                 || ( m_prefetching.find( prefetchBlockOffset.value() ) != m_prefetching.end() )
                  || m_cache.test( prefetchBlockOffset.value() ) )
             {
                 continue;
             }
 
             ++m_prefetchCount;
-            auto decodeTask = [this, offset = *prefetchBlockOffset](){ return decodeBlock( offset ); };
+            auto decodeTask = [this, offset = prefetchBlockOffset.value()](){ return decodeBlock( offset ); };
             auto prefetchedFuture = m_threadPool.submitTask( std::move( decodeTask ) );
             const auto [_, wasInserted] = m_prefetching.emplace( *prefetchBlockOffset, std::move( prefetchedFuture ) );
             if ( !wasInserted ) {
@@ -637,7 +684,6 @@ public:
         result.expectedCRC = block.bwdata.headerCRC;
 
         if ( block.eos() ) {
-            std::cerr << ( ThreadSafeOutput() << "EOS block at" << blockOffset ).str();
             result.encodedSizeInBits = block.encodedSizeInBits;
         }
 
@@ -710,7 +756,7 @@ private:
     }
 
 private:
-    static constexpr bool m_debugOutput{ true };
+    static constexpr bool m_debugOutput{ false };
 
     /* Analytics */
     size_t m_prefetchCount{ 0 };
@@ -839,11 +885,16 @@ public:
           char* const  outputBuffer = nullptr,
           const size_t nBytesToRead = std::numeric_limits<size_t>::max() ) override
     {
+        if ( closed() ) {
+            throw std::invalid_argument( "You may not call read on closed ParallelBZ2Reader!" );
+        }
+
         if ( eof() || ( nBytesToRead == 0 ) ) {
             return 0;
         }
 
         if ( !m_blockFetcher ) {
+            m_blockFinder->start();  /* Not strictly necessary, only for performance. */
             m_blockFetcher = std::make_unique<BlockFetcher>( m_bitReader, m_blockFinder, m_fetcherParallelization );
         }
 
@@ -861,7 +912,6 @@ public:
                 const auto blockIndex = m_blockMap->blockCount();
                 const auto encodedOffsetInBits = m_blockFinder->get( blockIndex );
                 if ( !encodedOffsetInBits ) {
-                    std::cerr << ( ThreadSafeOutput() << "EOF reached 2" ).str();
                     m_blockToDataOffsetsComplete = true;
                     m_atEndOfFile = true;
                     break;
@@ -927,6 +977,10 @@ public:
     seek( long long int offset,
           int           origin = SEEK_SET ) override
     {
+        if ( closed() ) {
+            throw std::invalid_argument( "You may not call seek on closed ParallelBZ2Reader!" );
+        }
+
         switch ( origin )
         {
         case SEEK_CUR:
@@ -1020,7 +1074,7 @@ public:
      *         (cumulative size of all prior decoded blocks).
      */
     std::map<size_t, size_t>
-    availableBlockOffsets() override
+    availableBlockOffsets() const override
     {
         return m_blockToDataOffsets;
     }

@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "common.hpp"
 #include "FileReader.hpp"
 
 
@@ -53,7 +54,7 @@ public:
     explicit
     BitReader( std::string filePath ) :
         m_filePath( std::move( filePath ) ),
-        m_file( fopen( m_filePath.c_str(), "rb" ) ),
+        m_file( throwingOpen( m_filePath, "rb" ) ),
         m_seekable( determineSeekable( ::fileno( m_file ) ) ),
         m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
     {
@@ -63,7 +64,7 @@ public:
     explicit
     BitReader( int fileDescriptor ) :
         m_fileDescriptor( fileDescriptor ),
-        m_file( fopen( fdFilePath( fileDescriptor ).c_str(), "rb" ) ),
+        m_file( throwingOpen( fdFilePath( fileDescriptor ), "rb" ) ),
         m_seekable( determineSeekable( ::fileno( m_file ) ) ),
         m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
     {
@@ -166,11 +167,11 @@ public:
         if ( other.m_file == nullptr ) {
             m_file = nullptr;
         } else if ( !other.m_filePath.empty() ) {
-            m_file = fopen( other.m_filePath.c_str(), "rb" );
+            m_file = throwingOpen( other.m_filePath, "rb" );
         } else if ( other.m_fileDescriptor != -1 ) {
-            m_file = fopen( fdFilePath( other.m_fileDescriptor ).c_str(), "rb" );
+            m_file = throwingOpen( fdFilePath( other.m_fileDescriptor ), "rb" );
         } else {
-            m_file = fopen( fdFilePath( ::fileno( other.m_file ) ).c_str(), "rb" );
+            m_file = throwingOpen( fdFilePath( ::fileno( other.m_file ) ), "rb" );
         }
 
         init();

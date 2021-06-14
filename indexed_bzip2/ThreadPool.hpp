@@ -152,7 +152,7 @@ private:
     }
 
 private:
-    bool m_threadPoolRunning = true;
+    std::atomic<bool> m_threadPoolRunning = true;
     std::deque<PackagedTaskWrapper> m_tasks;
     /** necessary for m_tasks AND m_pingWorkers or else the notify_all might go unnoticed! */
     mutable std::mutex m_mutex;

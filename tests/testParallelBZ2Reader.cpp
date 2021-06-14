@@ -138,8 +138,8 @@ testDecodingBz2ForFirstTime()
         {
             std::cerr << "Read " << nBytesToRead << "B\n";
 
-            std::vector<char> decodedBuffer( nBytesToRead, 111 );
-            std::vector<char> encodedBuffer( nBytesToRead, 222 );
+            std::vector<char> decodedBuffer( nBytesToRead, 11 );
+            std::vector<char> encodedBuffer( nBytesToRead, 22 );
 
             if ( !encodedFile.eof() ) {
                 REQUIRE_EQUAL( static_cast<size_t>( decodedFile.tellg() ), encodedFile.tell() );
@@ -244,6 +244,22 @@ testDecodingBz2ForFirstTime()
 int
 main( void )
 {
+    bool fileNotFound = false;
+
+    if ( !fileExists( encodedTestFilePath.c_str() ) ) {
+        std::cerr << "Required compressed sample test file not found: " << encodedTestFilePath << "\n";
+        fileNotFound = true;
+    }
+
+    if ( !fileExists( decodedTestFilePath.c_str() ) ) {
+        std::cerr << "Required uncompressed sample test file not found: " << decodedTestFilePath << "\n";
+        fileNotFound = true;
+    }
+
+    if ( fileNotFound ) {
+        return 1;
+    }
+
     testSimpleOpenAndClose();
 
     testDecodingBz2ForFirstTime();
