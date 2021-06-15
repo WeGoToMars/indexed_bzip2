@@ -45,7 +45,8 @@ jobs:
         python3 -m pip install dist/*.tar.gz
     - name: Run pure C++ tests with sanitizers
       run: |
-        head -c $(( 64*1024*1024 )) /dev/urandom > decoded-sample
+        nproc
+        head -c $(( 4*1024*1024 )) /dev/urandom > decoded-sample
         lbzip2 -k -c decoded-sample > encoded-sample.bz2
         for sanitized in address thread undefined safe-stack; do
         (
