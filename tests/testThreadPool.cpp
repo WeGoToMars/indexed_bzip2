@@ -35,11 +35,12 @@ testThreadPool( unsigned int nThreads,
         std::cout << "Checksum: " << checksum.get() << "\n";
     }
     const auto t1 = std::chrono::high_resolution_clock::now();
-    const auto duration = std::chrono::duration<double>( t1 - t0 ).count();
+    const auto durationMeasured = std::chrono::duration<double>( t1 - t0 ).count();
     const auto durationPredicted = secondsToWait * ceilDiv( nTasks, nThreads );
 
-    std::cerr << "Checksums with thread pool took " << duration << "s (predicted: " << durationPredicted << "s)\n";
-    assert( ( duration - durationPredicted ) / durationPredicted < 1.0 );
+    std::cerr << "Checksums with thread pool took " << durationMeasured << "s "
+              << "(predicted: " << durationPredicted << "s)\n";
+    assert( ( durationMeasured - durationPredicted ) / durationPredicted < 1.0 );
 }
 
 

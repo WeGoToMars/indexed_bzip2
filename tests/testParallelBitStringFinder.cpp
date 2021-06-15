@@ -64,7 +64,7 @@ testBitStringFinder( uint64_t                          bitStringToFind,
     for ( size_t parallelization = 1; parallelization <= std::thread::hardware_concurrency(); parallelization *= 2 )
     {
         /* test the version working on an input file by writing the buffer to a temporary file */
-        auto const file = make_unique_file_ptr( std::tmpfile() );
+        auto const file = make_unique_file_ptr( std::tmpfile() );  // NOLINT
         std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file.get() );
         /**
          * Flush the file so that BitReader sees the written data when accessing the file through the file descriptor.

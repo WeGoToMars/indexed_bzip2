@@ -27,7 +27,7 @@
 [[nodiscard]] bool
 stdinHasInput()
 {
-    pollfd fds;
+    pollfd fds;  // NOLINT
     fds.fd = STDIN_FILENO;
     fds.events = POLLIN;
     return poll(&fds, 1, /* timeout in ms */ 0 ) == 1;
@@ -37,11 +37,11 @@ stdinHasInput()
 [[nodiscard]] bool
 stdoutIsDevNull()
 {
-    struct stat devNull;
-    struct stat stdOut;
+    struct stat devNull;  // NOLINT
+    struct stat stdOut;  // NOLINT
     return ( fstat( STDOUT_FILENO, &stdOut ) == 0 ) &&
            ( stat( "/dev/null", &devNull ) == 0 ) &&
-           S_ISCHR( stdOut.st_mode ) &&
+           S_ISCHR( stdOut.st_mode ) &&  // NOLINT
            ( devNull.st_dev == stdOut.st_dev ) &&
            ( devNull.st_ino == stdOut.st_ino );
 }
@@ -64,7 +64,7 @@ checkOffsets( const std::string&         filePath,
         if ( bitStringsToFind.count( magicBytes ) == 0 ) {
             std::stringstream msg;
             msg << "Magic bytes " << std::hex << magicBytes << std::dec << " at offset "
-                << ( offset / CHAR_BIT ) << " B " << ( offset & CHAR_BIT ) << "b "
+                << ( offset / CHAR_BIT ) << " B " << ( offset % CHAR_BIT ) << "b "
                 << "do not match bzip2 magic bytes!";
             throw std::logic_error( msg.str() );
         }

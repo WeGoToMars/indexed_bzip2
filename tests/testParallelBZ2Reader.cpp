@@ -55,6 +55,7 @@ toSeekdir( int origin )
     case SEEK_SET: return std::ios_base::beg;
     case SEEK_CUR: return std::ios_base::cur;
     case SEEK_END: return std::ios_base::end;
+    default: break;
     }
 
     throw std::invalid_argument( "Unknown origin" );
@@ -71,7 +72,7 @@ testSimpleOpenAndClose()
 {
     const auto t0 = std::chrono::high_resolution_clock::now();
     {
-        ParallelBZ2Reader encodedFile( encodedTestFilePath );
+        ParallelBZ2Reader encodedFile( encodedTestFilePath );  // NOLINT
         const auto t1 = std::chrono::high_resolution_clock::now();
         const auto dt = std::chrono::duration_cast<std::chrono::duration<double> >( t1 - t0 ).count();
         REQUIRE( dt < 1 );

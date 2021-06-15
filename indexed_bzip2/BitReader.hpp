@@ -132,7 +132,7 @@ public:
 
         init();
 
-        seek( other.tell() );
+        seekInternal( other.tell() );
     }
 
     ~BitReader() = default;
@@ -244,7 +244,10 @@ public:
 
     size_t
     seek( long long int offsetBits,
-          int           origin = SEEK_SET ) final;
+          int           origin = SEEK_SET ) final
+    {
+        return seekInternal( offsetBits, origin );
+    }
 
     size_t
     size() const final
@@ -259,6 +262,10 @@ public:
     }
 
 private:
+    size_t
+    seekInternal( long long int offsetBits,
+                  int           origin = SEEK_SET );
+
     static size_t
     determineFileSize( int fileNumber )
     {
@@ -407,8 +414,8 @@ BitReader::readSafe( const uint8_t bitsWanted )
 
 
 inline size_t
-BitReader::seek( long long int offsetBits,
-                 int           origin )
+BitReader::seekInternal( long long int offsetBits,
+                         int           origin )
 {
     switch ( origin )
     {

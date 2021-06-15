@@ -43,23 +43,6 @@ jobs:
         python3 setup.py sdist
         twine check dist/*
         python3 -m pip install dist/*.tar.gz
-    - name: Run pure C++ tests with sanitizers
-      run: |
-        nproc
-        head -c $(( 4*1024*1024 )) /dev/urandom > decoded-sample
-        lbzip2 -k -c decoded-sample > encoded-sample.bz2
-        for sanitized in address thread undefined safe-stack; do
-        (
-            mkdir -p "sanitized/$sanitized" &&
-            cd -- "$_" &&
-            CXX=clang++ CC=clang cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=$sanitized" ../..
-            # ctest needs the sample files in 'test' subfolder!
-            ln -s ../../../decoded-sample tests/decoded-sample &>/dev/null
-            ln -s ../../../encoded-sample.bz2 tests/encoded-sample.bz2 &>/dev/null
-            ninja check
-        )
-        done
-
     - name: Run cppcheck
       run: |
         set -o pipefail
@@ -77,10 +60,26 @@ jobs:
         cd ..
         set -o pipefail
         run-clang-tidy -j $( nproc ) -p build | tee clang-tidy.log
-        if grep -E -i '(style:|warning:|error:) .* \[[^]]*\]$' *.log; then
+        if grep -E -i '(warning:|error:) .* \[[^]]*\]$' *.log; then
             echo -e '\e[31mThere were errors while running clang-tidy!\e[0m'
             exit 1
         fi
+    - name: Run pure C++ tests with sanitizers
+      run: |
+        nproc
+        head -c $(( 2*1024*1024 )) /dev/urandom > decoded-sample
+        lbzip2 -1 -k -c decoded-sample > encoded-sample.bz2
+        for sanitized in address thread undefined safe-stack; do
+        (
+            mkdir -p "sanitized/$sanitized" &&
+            cd -- "$_" &&
+            CXX=clang++ CC=clang cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=$sanitized" ../..
+            # ctest needs the sample files in 'test' subfolder!
+            ln -s ../../../decoded-sample tests/decoded-sample &>/dev/null
+            ln -s ../../../encoded-sample.bz2 tests/encoded-sample.bz2 &>/dev/null
+            ninja check
+        )
+        done
     - name: Run Unit Tests
       run: |
         cd tests
