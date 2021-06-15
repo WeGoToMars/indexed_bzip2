@@ -46,12 +46,11 @@ public:
                                                                             std::thread::hardware_concurrency() / 8U ),
                              size_t             requestedBytes = 0,
                              size_t             fileBufferSizeBytes = 1*1024*1024 ) :
-        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
+        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ), filePath ),
         m_threadPool( parallelization )
     {
-        this->m_file = throwingOpen( filePath, "rb" );
         if ( BaseType::seekable() ) {
-            fseek( this->m_file, 0, SEEK_SET );
+            fseek( this->m_file.get(), 0, SEEK_SET );
         }
     }
 
@@ -60,12 +59,13 @@ public:
                              size_t   parallelization = std::max( 1U, std::thread::hardware_concurrency() / 8U ),
                              size_t   requestedBytes = 0,
                              size_t   fileBufferSizeBytes = 1*1024*1024 ) :
-        BaseType( bitStringToFind, chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ) ),
+        BaseType( bitStringToFind,
+                  chunkSize( fileBufferSizeBytes, requestedBytes, parallelization ),
+                  BaseType::fdFilePath( fileDescriptor ) ),
         m_threadPool( parallelization )
     {
-        this->m_file = fdopen( dup( fileDescriptor ), "rb" );
         if ( BaseType::seekable() ) {
-            fseek( this->m_file, 0, SEEK_SET );
+            fseek( this->m_file.get(), 0, SEEK_SET );
         }
     }
 

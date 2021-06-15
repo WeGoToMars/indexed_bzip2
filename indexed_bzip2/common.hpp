@@ -105,26 +105,12 @@ fileExists( const char* filePath )
 }
 
 
-inline FILE*
-throwingOpen( const std::string& filePath,
-              const char*        mode )
-{
-    auto* file = std::fopen( filePath.c_str(), mode ); // NOLINT
-    if ( file == nullptr ) {
-        std::stringstream msg;
-        msg << "Opening file '" << filePath << " failed!";
-        throw std::invalid_argument( msg.str() );
-    }
-    return file;
-}
-
-
-using unique_file_ptr = std::unique_ptr<FILE, std::function<void( FILE* )> >;
+using unique_file_ptr = std::unique_ptr<std::FILE, std::function<void( std::FILE* )> >;
 
 inline unique_file_ptr
-make_unique_file_ptr( FILE* file )
+make_unique_file_ptr( std::FILE* file )
 {
-    return unique_file_ptr( file, []( FILE* ownedFile ){
+    return unique_file_ptr( file, []( auto* ownedFile ){
         if ( ownedFile != nullptr ) {
             std::fclose( ownedFile );
         } } );
@@ -134,7 +120,21 @@ inline unique_file_ptr
 make_unique_file_ptr( char const* const filePath,
                       char const* const mode )
 {
-    return make_unique_file_ptr( throwingOpen( filePath, mode ) );
+    return make_unique_file_ptr( std::fopen( filePath, mode ) ); // NOLINE
+}
+
+
+inline unique_file_ptr
+throwingOpen( const std::string& filePath,
+              const char*        mode )
+{
+    auto file = make_unique_file_ptr( filePath.c_str(), mode );
+    if ( file == nullptr ) {
+        std::stringstream msg;
+        msg << "Opening file '" << filePath << " failed!";
+        throw std::invalid_argument( msg.str() );
+    }
+    return file;
 }
 
 

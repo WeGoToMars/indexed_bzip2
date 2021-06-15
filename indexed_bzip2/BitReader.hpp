@@ -55,8 +55,8 @@ public:
     BitReader( std::string filePath ) :
         m_filePath( std::move( filePath ) ),
         m_file( throwingOpen( m_filePath, "rb" ) ),
-        m_seekable( determineSeekable( ::fileno( m_file ) ) ),
-        m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
+        m_seekable( determineSeekable( ::fileno( m_file.get() ) ) ),
+        m_fileSizeBytes( determineFileSize( ::fileno( m_file.get() ) ) )
     {
         init();
     }
@@ -65,8 +65,8 @@ public:
     BitReader( int fileDescriptor ) :
         m_fileDescriptor( fileDescriptor ),
         m_file( throwingOpen( fdFilePath( fileDescriptor ), "rb" ) ),
-        m_seekable( determineSeekable( ::fileno( m_file ) ) ),
-        m_fileSizeBytes( determineFileSize( ::fileno( m_file ) ) )
+        m_seekable( determineSeekable( ::fileno( m_file.get() ) ) ),
+        m_fileSizeBytes( determineFileSize( ::fileno( m_file.get() ) ) )
     {
         init();
     }
@@ -93,21 +93,7 @@ public:
         seek( 0, SEEK_SET ); /* seeks to m_offsetBits under the hood */
     }
 
-    BitReader( BitReader&& other ) :
-        m_filePath( std::move( other.m_filePath ) ),
-        m_fileDescriptor( other.m_fileDescriptor ),
-        m_file( other.m_file ),
-        m_seekable( other.m_seekable ),
-        m_fileSizeBytes( other.m_fileSizeBytes ),
-        m_offsetBits( other.m_offsetBits ),
-        m_inbuf( std::move( other.m_inbuf ) ),
-        m_inbufPos( other.m_inbufPos ),
-        m_lastReadSuccessful( other.m_lastReadSuccessful )
-    {
-        /* This is the whole reason why this move constructor can't use the default implementation!
-         * Without this, 'other' would close the file pointer which we copied to us in its destructor! */
-        other.m_file = nullptr;
-    }
+    BitReader( BitReader&& other ) = default;
 
     BitReader& operator=( BitReader&& other ) = delete;
     BitReader& operator=( const BitReader& other ) = delete;
@@ -134,14 +120,14 @@ public:
             throw std::invalid_argument( "Copying BitReader to unseekable file not supported yet!" );
         }
 
-        if ( other.m_file == nullptr ) {
-            m_file = nullptr;
-        } else if ( !other.m_filePath.empty() ) {
-            m_file = throwingOpen( other.m_filePath, "rb" );
-        } else if ( other.m_fileDescriptor != -1 ) {
-            m_file = throwingOpen( fdFilePath( other.m_fileDescriptor ), "rb" );
-        } else {
-            m_file = throwingOpen( fdFilePath( ::fileno( other.m_file ) ), "rb" );
+        if ( other.m_file ) {
+            if ( !other.m_filePath.empty() ) {
+                m_file = throwingOpen( other.m_filePath, "rb" );
+            } else if ( other.m_fileDescriptor != -1 ) {
+                m_file = throwingOpen( fdFilePath( other.m_fileDescriptor ), "rb" );
+            } else {
+                m_file = throwingOpen( fdFilePath( ::fileno( other.m_file.get() ) ), "rb" );
+            }
         }
 
         init();
@@ -149,12 +135,7 @@ public:
         seek( other.tell() );
     }
 
-    ~BitReader()
-    {
-        if ( m_file != nullptr ) {
-            fclose( m_file );
-        }
-    }
+    ~BitReader() = default;
 
     bool
     eof() const final
@@ -171,15 +152,14 @@ public:
     void
     close() final
     {
-        fclose( fp() );
-        m_file = nullptr;
+        m_file = {};
         m_inbuf.clear();
     }
 
     bool
     closed() const final
     {
-        return ( m_file == nullptr ) && m_inbuf.empty();
+        return !m_file && m_inbuf.empty();
     }
 
     uint32_t
@@ -250,16 +230,16 @@ public:
     FILE*
     fp() const
     {
-        return m_file;
+        return m_file.get();
     }
 
     int
     fileno() const final
     {
-        if ( m_file == nullptr ) {
-            throw std::invalid_argument( "The file is not open!" );
+        if ( m_file ) {
+            return ::fileno( m_file.get() );
         }
-        return ::fileno( m_file );
+        throw std::invalid_argument( "The file is not open!" );
     }
 
     size_t
@@ -310,7 +290,7 @@ private:
     refillBuffer()
     {
         m_inbuf.resize( IOBUF_SIZE );
-        const size_t nBytesRead = fread( m_inbuf.data(), 1, m_inbuf.size(), m_file );
+        const size_t nBytesRead = fread( m_inbuf.data(), 1, m_inbuf.size(), m_file.get() );
         if ( nBytesRead < m_inbuf.size() ) {
             m_lastReadSuccessful = false;
         }
@@ -319,8 +299,8 @@ private:
             std::stringstream msg;
             msg
             << "[BitReader] Not enough data to read!\n"
-            << "  File pointer: " << (void*)m_file << "\n"
-            << "  File position: " << ftell( m_file ) << "\n"
+            << "  File pointer: " << (void*)m_file.get() << "\n"
+            << "  File position: " << ftell( m_file.get() ) << "\n"
             << "  Input buffer size: " << m_inbuf.size() << "\n"
             << "\n";
             throw std::domain_error( msg.str() );
@@ -351,7 +331,7 @@ private:
     std::string m_filePath;  /**< only used for copy constructor */
     int m_fileDescriptor = -1;  /**< only used for copy constructor */
 
-    FILE*   m_file = nullptr;
+    unique_file_ptr m_file;
 
     /** These three members are basically const and should only be changed by assignment or move operator. */
     bool    m_seekable{ false };
@@ -468,7 +448,7 @@ BitReader::seek( long long int offsetBits,
     m_inbufBits = 0;
     m_inbufBitCount = 0;
 
-    if ( m_file == nullptr ) {
+    if ( !m_file ) {
         if ( bytesToSeek >= m_inbuf.size() ) {
             std::stringstream msg;
             msg << "[BitReader] Could not seek to specified byte " << bytesToSeek;
@@ -482,11 +462,12 @@ BitReader::seek( long long int offsetBits,
         }
     } else {
         if ( m_seekable ) {
-            const auto returnCodeSeek = fseek( m_file, bytesToSeek, SEEK_SET );
-            if ( ( returnCodeSeek != 0 ) || feof( m_file ) || ferror( m_file ) ) {
+            const auto returnCodeSeek = fseek( m_file.get(), bytesToSeek, SEEK_SET );
+            if ( ( returnCodeSeek != 0 ) || feof( m_file.get() ) || ferror( m_file.get() ) ) {
                 std::stringstream msg;
                 msg << "[BitReader] Could not seek to specified byte " << bytesToSeek
-                << " subbit " << subBitsToSeek << ", feof: " << feof( m_file ) << ", ferror: " << ferror( m_file )
+                << " subbit " << subBitsToSeek << ", feof: " << feof( m_file.get() )
+                << ", ferror: " << ferror( m_file.get() )
                 << ", returnCodeSeek: " << returnCodeSeek;
                 throw std::invalid_argument( msg.str() );
             }
@@ -497,7 +478,7 @@ BitReader::seek( long long int offsetBits,
             auto nBytesToRead = static_cast<size_t>( offsetBits ) - tell();
             for ( size_t nBytesRead = 0; nBytesRead < nBytesToRead; nBytesRead += buffer.size() ) {
                 const auto nChunkBytesToRead = std::min( nBytesToRead - nBytesRead, IOBUF_SIZE );
-                const auto nChunkBytesRead = fread( buffer.data(), 1, nBytesToRead, m_file );
+                const auto nChunkBytesRead = fread( buffer.data(), 1, nBytesToRead, m_file.get() );
 
                 m_readBitsCount += 8 * nChunkBytesRead;
 
@@ -509,7 +490,7 @@ BitReader::seek( long long int offsetBits,
 
         if ( subBitsToSeek > 0 ) {
             m_inbufBitCount = 8 - subBitsToSeek;
-            m_inbufBits = fgetc( m_file );
+            m_inbufBits = fgetc( m_file.get() );
         }
     }
 
