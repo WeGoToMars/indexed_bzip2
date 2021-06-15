@@ -12,8 +12,6 @@ import subprocess
 import tempfile
 import time
 
-from importlib.metadata import version
-
 import indexed_bzip2
 from indexed_bzip2 import IndexedBzip2File
 
@@ -234,7 +232,7 @@ def testPythonInterface(parallelization):
     assert file.closed
 
 if __name__ == '__main__':
-    print( "indexed_bzip2 version:", version( 'indexed_bzip2' ) )
+    print( "indexed_bzip2 version:", indexed_bzip2.__version__ )
 
     testPythonInterface(1)
     testPythonInterface(2)
