@@ -8,8 +8,8 @@
 
 
 namespace {
-int gnTests = 0;
-int gnTestErrors = 0;
+int gnTests = 0;  // NOLINT
+int gnTestErrors = 0;  // NOLINT
 }
 
 
@@ -46,7 +46,7 @@ testBitStringFinder( uint64_t                          bitStringToFind,
                      const std::vector<unsigned char>& buffer,
                      const std::vector<size_t>&        stringPositions )
 {
-    const auto rawBuffer = reinterpret_cast<const char*>( buffer.data() );
+    auto const * const rawBuffer = reinterpret_cast<const char*>( buffer.data() );
 
     {
         /* test the version working on an input buffer */
@@ -58,8 +58,8 @@ testBitStringFinder( uint64_t                          bitStringToFind,
 
     {
         /* test the version working on an input file by writing the buffer to a temporary file */
-        const auto file = std::tmpfile();
-        std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file );
+        auto const file = make_unique_file_ptr( std::tmpfile() );
+        std::fwrite( buffer.data(), sizeof( buffer[0] ), buffer.size(), file.get() );
         /**
          * Flush the file so that BitReader sees the written data when accessing the file through the file descriptor.
          * Don't close file because:
@@ -69,18 +69,17 @@ testBitStringFinder( uint64_t                          bitStringToFind,
          * Also, use smallest sane value for fileBufferSizeBytes = sizeof( uint64_t ) in order to check that
          * recognizing bit strings accross file buffer borders works correctly.
          */
-        std::fflush( file );
-        BitStringFinder<bitStringSize> bitStringFinder( fileno( file ), bitStringToFind, sizeof( uint64_t ) );
+        std::fflush( file.get() );
+        BitStringFinder<bitStringSize> bitStringFinder( fileno( file.get() ), bitStringToFind, sizeof( uint64_t ) );
         if ( !testBitStringFinder( std::move( bitStringFinder ), stringPositions ) ) {
             std::cerr << "Version working on input file failed!\n";
         }
-        std::fclose( file );
     }
 }
 
 
 int
-main( void )
+main()
 {
     /* 0-size bit strings to find arguably makes no sense to test for. */
     //testBitStringFinder<0>( 0b0, {}, {} );

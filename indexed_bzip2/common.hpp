@@ -109,7 +109,7 @@ inline FILE*
 throwingOpen( const std::string& filePath,
               const char*        mode )
 {
-    auto* file = fopen( filePath.c_str(), mode );
+    auto* file = std::fopen( filePath.c_str(), mode ); // NOLINT
     if ( file == nullptr ) {
         std::stringstream msg;
         msg << "Opening file '" << filePath << " failed!";
@@ -122,10 +122,19 @@ throwingOpen( const std::string& filePath,
 using unique_file_ptr = std::unique_ptr<FILE, std::function<void( FILE* )> >;
 
 inline unique_file_ptr
+make_unique_file_ptr( FILE* file )
+{
+    return unique_file_ptr( file, []( FILE* ownedFile ){
+        if ( ownedFile != nullptr ) {
+            std::fclose( ownedFile );
+        } } );
+}
+
+inline unique_file_ptr
 make_unique_file_ptr( char const* const filePath,
                       char const* const mode )
 {
-    return unique_file_ptr( fopen( filePath, mode ), []( FILE* file ){ fclose( file ); } ); // NOLINT
+    return make_unique_file_ptr( throwingOpen( filePath, mode ) );
 }
 
 

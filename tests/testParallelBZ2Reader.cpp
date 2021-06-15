@@ -11,8 +11,8 @@
 
 namespace
 {
-int gnTests = 0;
-int gnTestErrors = 0;
+int gnTests = 0;  // NOLINT
+int gnTestErrors = 0;  // NOLINT
 
 /**
  * head -c $(( 64*1024*1024 )) /dev/urandom > decoded-sample
@@ -62,8 +62,8 @@ toSeekdir( int origin )
 }
 
 
-#define REQUIRE_EQUAL( a, b ) requireEqual( a, b, __LINE__ )
-#define REQUIRE( condition ) require( condition, #condition, __LINE__ )
+#define REQUIRE_EQUAL( a, b ) requireEqual( a, b, __LINE__ ) // NOLINT
+#define REQUIRE( condition ) require( condition, #condition, __LINE__ ) // NOLINT
 
 
 void
@@ -242,7 +242,7 @@ testDecodingBz2ForFirstTime()
 
 
 int
-main( void )
+main()
 {
     bool fileNotFound = false;
 

@@ -73,8 +73,8 @@ checkOffsets( const std::string&         filePath,
 
 
 void
-dumpOffsets( std::ostream&             out,
-             const std::vector<size_t> offsets )
+dumpOffsets( std::ostream&              out,
+             const std::vector<size_t>& offsets )
 {
     if ( !out.good() ) {
         return;
@@ -87,8 +87,8 @@ dumpOffsets( std::ostream&             out,
 
 
 void
-dumpOffsets( std::ostream&                  out,
-             const std::map<size_t, size_t> offsets )
+dumpOffsets( std::ostream&                   out,
+             const std::map<size_t, size_t>& offsets )
 {
     if ( !out.good() ) {
         return;
@@ -277,7 +277,7 @@ cli( int argc, char** argv )
     const auto decoderParallelism     = getParallelism( parsedArgs["decoder-parallelism"     ].as<unsigned int>() );
 
     if ( verbose ) {
-        for ( const auto path : { "input", "output", "list-compressed-offsets", "list-offsets" } ) {
+        for ( auto const* const path : { "input", "output", "list-compressed-offsets", "list-offsets" } ) {
             std::string value = "<none>";
             try {
                 value = parsedArgs[path].as<std::string>();
