@@ -29,7 +29,6 @@ target_sources(indexed_bzip2_parallel INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/ParallelBZ2Reader.hpp
     ${CMAKE_CURRENT_LIST_DIR}/Prefetcher.hpp
     ${CMAKE_CURRENT_LIST_DIR}/ThreadPool.hpp
-    ${CMAKE_CURRENT_LIST_DIR}/ThreadSafeQueue.hpp
 )
 target_link_libraries(indexed_bzip2_parallel INTERFACE indexed_bzip2 Threads::Threads)
 target_compile_features(indexed_bzip2_parallel INTERFACE cxx_std_17)

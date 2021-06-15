@@ -29,7 +29,6 @@
 #include "ParallelBitStringFinder.hpp"
 #include "Prefetcher.hpp"
 #include "ThreadPool.hpp"
-#include "ThreadSafeQueue.hpp"
 
 
 /**
