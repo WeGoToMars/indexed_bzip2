@@ -376,13 +376,13 @@ public:
         std::optional<size_t> decodedOffset;
         if ( m_blockToDataOffsets.empty() ) {
             decodedOffset = 0;
-        } else if ( encodedBlockOffset > m_blockToDataOffsets.rbegin()->first ) {
-            decodedOffset = m_blockToDataOffsets.rbegin()->second + m_lastBlockDecodedSize;
+        } else if ( encodedBlockOffset > m_blockToDataOffsets.back().first ) {
+            decodedOffset = m_blockToDataOffsets.back().second + m_lastBlockDecodedSize;
         }
 
         /* If successive value or empty, then simply append */
         if ( decodedOffset ) {
-            m_blockToDataOffsets.emplace( encodedBlockOffset, *decodedOffset );
+            m_blockToDataOffsets.emplace_back( encodedBlockOffset, *decodedOffset );
             m_lastBlockDecodedSize = decodedSize;
             m_lastBlockEncodedSize = encodedSize;
             return;
@@ -390,9 +390,11 @@ public:
 
         /* Generally, block inserted offsets should always be increasing!
          * But do ignore duplicates after confirming that there is no data inconsistency. */
-        const auto match = m_blockToDataOffsets.find( encodedBlockOffset );
+        const auto match = std::lower_bound(
+            m_blockToDataOffsets.begin(), m_blockToDataOffsets.end(), std::make_pair( encodedBlockOffset, 0 ),
+            [] ( const auto& a, const auto& b ) { return a.first < b.first; } );
 
-        if ( match == m_blockToDataOffsets.end() ) {
+        if ( ( match == m_blockToDataOffsets.end() ) || ( match->first != encodedBlockOffset ) ) {
             throw std::invalid_argument( "Inserted block offsets should be strictly increasing!" );
         }
 
@@ -419,9 +421,7 @@ public:
 
         BlockInfo result;
 
-        /* find offset from map (key and values should sorted, so we can bisect!) */
-        /** @todo because map iterators are not random access iterators and because the comparison operator
-         * is not very time-consuming, it's probably still effectively linear complexity. */
+        /* find offset from map (key and values should be sorted in ascending order, so we can bisect!) */
         const auto blockOffset = std::lower_bound(
             m_blockToDataOffsets.rbegin(), m_blockToDataOffsets.rend(), std::make_pair( 0, dataOffset ),
             [] ( std::pair<size_t, size_t> a, std::pair<size_t, size_t> b ) { return a.second > b.second; } );
@@ -436,7 +436,6 @@ public:
 
         result.encodedOffsetInBits = blockOffset->first;
         result.decodedOffsetInBytes = blockOffset->second;
-        /** @todo O(n) */
         result.blockIndex = std::distance( blockOffset, m_blockToDataOffsets.rend() ) - 1;
 
         if ( blockOffset == m_blockToDataOffsets.rbegin() ) {
@@ -476,10 +475,10 @@ public:
     }
 
     void
-    setBlockOffsets( std::map<size_t, size_t> blockOffsets )
+    setBlockOffsets( std::map<size_t, size_t> const& blockOffsets )
     {
         std::scoped_lock lock( m_mutex );
-        m_blockToDataOffsets = std::move( blockOffsets );
+        m_blockToDataOffsets.assign( blockOffsets.begin(), blockOffsets.end() );
         m_finalized = true;
     }
 
@@ -487,7 +486,8 @@ public:
     blockOffsets() const
     {
         std::scoped_lock lock( m_mutex );
-        return m_blockToDataOffsets;
+
+        return std::map<size_t, size_t>( m_blockToDataOffsets.begin(), m_blockToDataOffsets.end() );
     }
 
     [[nodiscard]] std::pair<size_t, size_t>
@@ -498,14 +498,14 @@ public:
         if ( m_blockToDataOffsets.empty() ) {
             throw std::out_of_range( "Can not return last element of empty block map!" );
         }
-        return *m_blockToDataOffsets.rbegin();
+        return m_blockToDataOffsets.back();
     }
 
 private:
     mutable std::mutex m_mutex;
 
     /** If complete, the last block will be of size 0 and indicate the end of stream! */
-    std::map<size_t, size_t> m_blockToDataOffsets;
+    std::vector< std::pair<size_t, size_t> > m_blockToDataOffsets;
     bool m_finalized{ false };
 
     size_t m_lastBlockEncodedSize{ 0 }; /**< Encoded block size of m_blockToDataOffsets.rbegin() */
