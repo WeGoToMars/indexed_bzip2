@@ -1041,10 +1041,6 @@ public:
 
         assert( static_cast<size_t>( offset ) - blockInfo.decodedOffsetInBytes > blockInfo.decodedSizeInBytes );
         if ( m_blockMap->finalized() ) {
-        #if 0 /** @todo why is this not working!? */
-            m_currentPosition = offset;
-            return tell();
-        #endif
             m_atEndOfFile = true;
             m_currentPosition = size();
             return tell();
