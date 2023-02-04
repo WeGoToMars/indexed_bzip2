@@ -134,6 +134,7 @@ public:
     [[nodiscard]] static bool
     isBgzfFile( const std::unique_ptr<FileReader>& file )
     {
+        return false;
         const auto oldPos = file->tell();
 
         HeaderBytes header;
