@@ -451,6 +451,14 @@ public:
           size_t     nMaxToDecode = std::numeric_limits<size_t>::max() );
 
     /**
+     * Counts the decompressed bytes until the end. The internal buffer will not be updated.
+     * Therefore, calling @ref read after this might return might return marker bytes.
+     * Currently, callgin read after count is undefined behavior.
+     */
+    [[nodiscard]] std::pair<size_t, Error>
+    count( BitReader& bitReader );
+
+    /**
      * @tparam treatLastBlockAsError This parameter is intended when using readHeader for finding valid headers.
      *         Ignoring last headers, filters candidates by 25% and filtering them sooner avoids reading the
      *         Huffman codings, which saves almost 50% of time!
@@ -557,6 +565,11 @@ private:
                             size_t               nMaxToDecode,
                             Window&              window,
                             const HuffmanCoding& coding );
+
+    template<typename HuffmanCoding>
+    [[nodiscard]] std::pair<size_t, Error>
+    countInternalCompressed( BitReader&           bitReader,
+                             const HuffmanCoding& coding );
 
     [[nodiscard]] static uint16_t
     getLength( uint16_t   code,
@@ -1217,6 +1230,120 @@ Block<CALCULATE_CRC32, ENABLE_STATISTICS>::readInternalCompressed( BitReader&   
     return { nBytesRead, Error::NONE };
 }
 
+
+template<bool CALCULATE_CRC32,
+         bool ENABLE_STATISTICS>
+std::pair<size_t, Error>
+Block<CALCULATE_CRC32, ENABLE_STATISTICS>::count( BitReader& bitReader )
+{
+    if ( eob() ) {
+        return { 0, Error::NONE };
+    }
+
+    if ( m_compressionType == CompressionType::RESERVED ) {
+        throw std::domain_error( "Invalid deflate compression type!" );
+    }
+
+    if constexpr ( ENABLE_STATISTICS ) {
+        times.readDataStart = now();
+    }
+
+    std::pair<size_t, Error> result{ 0, Error::INVALID_COMPRESSION };
+
+    switch ( m_compressionType )
+    {
+    case CompressionType::UNCOMPRESSED:
+    {
+        const auto currentPosition = bitReader.tell();
+        const auto targetPosition = currentPosition + m_uncompressedSize * BYTE_SIZE;
+        const auto seekedPosition = bitReader.seek( SEEK_CUR, targetPosition );
+        const auto nBytesRead = ( seekedPosition - currentPosition ) / BYTE_SIZE;
+
+        m_atEndOfBlock = true;
+        m_decodedBytes += nBytesRead;
+
+        if constexpr ( ENABLE_STATISTICS ) {
+            durations.readData += duration( times.readDataStart );
+        }
+
+        result = { nBytesRead, nBytesRead == m_uncompressedSize ? Error::NONE : Error::EOF_UNCOMPRESSED };
+        break;
+    }
+
+    case CompressionType::FIXED_HUFFMAN:
+        result = countInternalCompressed( bitReader, m_fixedHC );
+        break;
+
+    case CompressionType::DYNAMIC_HUFFMAN:
+        result = countInternalCompressed( bitReader, m_literalHC );
+        break;
+
+    case CompressionType::RESERVED:
+        break;
+    }
+
+    if constexpr ( ENABLE_STATISTICS ) {
+        durations.readData += duration( times.readDataStart );
+    }
+
+    return result;
+}
+
+
+template<bool CALCULATE_CRC32,
+         bool ENABLE_STATISTICS>
+template<typename HuffmanCoding>
+std::pair<size_t, Error>
+Block<CALCULATE_CRC32, ENABLE_STATISTICS>::countInternalCompressed( BitReader&           bitReader,
+                                                                    const HuffmanCoding& coding )
+{
+    if ( !coding.isValid() ) {
+        throw std::invalid_argument( "No Huffman coding loaded! Call readHeader first!" );
+    }
+
+    size_t nBytesRead{ 0 };
+    while ( !m_atEndOfBlock ) {
+        const auto decoded = coding.decode( bitReader );
+        if ( !decoded ) {
+            return { nBytesRead, Error::INVALID_HUFFMAN_CODE };
+        }
+        auto code = *decoded;
+
+        if ( code <= 255 ) {
+            if constexpr ( ENABLE_STATISTICS ) {
+                symbolTypes.literal++;
+            }
+
+            ++nBytesRead;
+            continue;
+        }
+
+        if ( UNLIKELY( code == 256 ) ) [[unlikely]] {
+            m_atEndOfBlock = true;
+            break;
+        }
+
+        if ( UNLIKELY( code > 285 ) ) [[unlikely]] {
+            return { nBytesRead, Error::INVALID_HUFFMAN_CODE };
+        }
+
+        if constexpr ( ENABLE_STATISTICS ) {
+            symbolTypes.backreference++;
+        }
+
+        const auto length = getLength( code, bitReader );
+        if ( length != 0 ) {
+            const auto [distance, error] = getDistance( bitReader );
+            if ( error != Error::NONE ) {
+                return { nBytesRead, error };
+            }
+            nBytesRead += length;
+        }
+    }
+
+    m_decodedBytes += nBytesRead;
+    return { nBytesRead, Error::NONE };
+}
 
 
 template<bool CALCULATE_CRC32,

@@ -19,6 +19,7 @@
 #include <filereader/Standard.hpp>
 #include <FileUtils.hpp>
 #include <GzipAnalyzer.hpp>
+#include <GzipCounter.hpp>
 #include <pragzip.hpp>
 #include <ParallelGzipReader.hpp>
 #include <Statistics.hpp>
@@ -328,7 +329,16 @@ pragzipCLI( int argc, char** argv )
         const auto t0 = now();
 
         size_t totalBytesRead{ 0 };
-        if ( decoderParallelism == 1 ) {
+
+        if ( countBytes && ! decompress && !countLines ) {
+            /* Shortcut for only counting uncompressed bytes. */
+            auto error = pragzip::Error::NONE;
+            std::tie( totalBytesRead, error ) = pragzip::deflate::countDecompressedBytes( std::move( inputFile ) );
+            if ( error != pragzip::Error::NONE ) {
+                std::cerr << "Not able to decompress the gzip: " << toString( error ) << "\n";
+                return 1;
+            }
+        } else if ( decoderParallelism == 1 ) {
             const auto writeAndCount =
                 [outputFileDescriptor, countLines, &newlineCount]
                 ( const void* const buffer,

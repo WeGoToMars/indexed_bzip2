@@ -14,6 +14,7 @@ target_sources(libpragzip INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/GzipAnalyzer.hpp
     ${CMAKE_CURRENT_LIST_DIR}/GzipBlockFinder.hpp
     ${CMAKE_CURRENT_LIST_DIR}/GzipChunkFetcher.hpp
+    ${CMAKE_CURRENT_LIST_DIR}/GzipCounter.hpp
     ${CMAKE_CURRENT_LIST_DIR}/GzipReader.hpp
     ${CMAKE_CURRENT_LIST_DIR}/IndexFileFormat.hpp
     ${CMAKE_CURRENT_LIST_DIR}/ParallelGzipReader.hpp
