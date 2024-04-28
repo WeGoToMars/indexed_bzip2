@@ -95,6 +95,7 @@ public:
             subchunks.back().usedWindowSymbols.clear();
         }
 
+        /* It is only done for the last subchunk. Why not do it for each subchunk? */
         determineUsedWindowSymbols( subchunks, bitReader );
 
         chunk.setSubchunks( std::move( subchunks ) );

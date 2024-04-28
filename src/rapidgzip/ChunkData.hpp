@@ -835,6 +835,7 @@ struct ChunkDataCounter final :
     ChunkDataCounter( const Configuration& configuration ) :
         ChunkData( configuration )
     {
+        /* @todo Beware, this is not used for DecodedData::getLastWindow! Get rid of getLastWindow? */
         /**
          * The internal index will only contain the offsets and empty windows.
          * The index should not be exported when this is used.
