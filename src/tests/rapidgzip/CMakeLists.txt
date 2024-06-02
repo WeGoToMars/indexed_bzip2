@@ -5,6 +5,7 @@ function(addRapidgzipTest name)
     target_compile_definitions(${name} PRIVATE RAPIDGZIP_FATAL_PERFORMANCE_WARNINGS)
     add_test(NAME ${name} COMMAND ${name})
     add_dependencies(all_tests ${name})
+    set_target_properties(${name} PROPERTIES CXX_STANDARD 20)
 endfunction()
 
 
@@ -17,6 +18,9 @@ addRapidgzipTest(testPrecodeCheck)
 addRapidgzipTest(testCompressedVector)
 addRapidgzipTest(testCRC32)
 addRapidgzipTest(testInflateWrapper)
+
+addRapidgzipTest(testLZ4)
+target_link_libraries(testLZ4 PRIVATE lz4)
 
 addRapidgzipTest(testDecodedData)
 target_compile_features(testDecodedData INTERFACE cxx_std_20)  # for aggregate initialization
