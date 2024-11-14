@@ -1921,7 +1921,8 @@ getUsedWindowSymbols( BitReader& bitReader )
                         if ( sizeToCopy == 0 ) {
                             continue;
                         }
-                        std::memcpy( decompressed.data() + nBytesRead + nBytesReadFromBlock, buffer.data(), sizeToCopy );
+                        std::memcpy( decompressed.data() + nBytesRead + nBytesReadFromBlock, buffer.data(),
+                                     sizeToCopy );
                         nBytesReadFromBlock += sizeToCopy;
                     }
                 } else {

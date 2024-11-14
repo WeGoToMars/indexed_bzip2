@@ -53,7 +53,8 @@ benchmarkHuffmanCoding( const std::vector<typename HuffmanCoding::BitCount>& cod
         const auto t0 = now();
         const auto errorCode = coding.initializeFromLengths( codeLengths );
         if ( errorCode != Error::NONE ) {
-            throw std::invalid_argument( "Could not create HuffmanCoding from given lengths: " + toString( errorCode ) );
+            throw std::invalid_argument( "Could not create HuffmanCoding from given lengths: " +
+                                         toString( errorCode ) );
         }
         const auto t1 = now();
 
@@ -308,7 +309,8 @@ benchmarkHuffmanCodingsWithData( size_t encodedSize )
 }
 
 
-int main()
+int
+main()
 {
     for ( const auto size : { 4_Ki, 32_Ki, 128_Ki } ) {
         benchmarkHuffmanCodingsWithData( size );

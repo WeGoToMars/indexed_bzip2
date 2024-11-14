@@ -402,7 +402,7 @@ testBufferSeekingFastPaths()
     REQUIRE_EQUAL( bitReader.statistics().bitBufferRefillCount, 1U );
     REQUIRE_EQUAL( bitReader.statistics().byteBufferRefillCount, 1U );
 
-    switch( FAST_PATH )
+    switch ( FAST_PATH )
     {
     case FastPath::BIT_BUFFER_SEEK:
     {

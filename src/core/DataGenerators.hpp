@@ -155,4 +155,3 @@ createRandomWords( const std::string& filePath,
         i += words[iWord].size();
     }
 }
-

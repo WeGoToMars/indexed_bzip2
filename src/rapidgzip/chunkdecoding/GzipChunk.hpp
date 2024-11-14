@@ -205,7 +205,7 @@ public:
         inflateWrapper.setFileType( result.fileType );
 
         size_t alreadyDecoded{ 0 };
-        while( true ) {
+        while ( true ) {
             const auto suggestedDecodeSize = decodedSize.value_or( ALLOCATION_CHUNK_SIZE );
             deflate::DecodedVector subchunk( suggestedDecodeSize > alreadyDecoded
                                              ? std::min( ALLOCATION_CHUNK_SIZE, suggestedDecodeSize - alreadyDecoded )
@@ -253,7 +253,7 @@ public:
                     << "The archive or the index may be corrupted or the stop condition might contain a bug. "
                     << "Decoded: " << alreadyDecoded << " B";
             if ( decodedSize ) {
-                 message << " out of requested " << *decodedSize << " B";
+                message << " out of requested " << *decodedSize << " B";
             }
             message << ", started at offset: " << result.encodedOffsetInBits << ".";
             throw std::runtime_error( std::move( message ).str() );
@@ -303,7 +303,7 @@ public:
                                                                       StoppingPoint::END_OF_BLOCK_HEADER |
                                                                       StoppingPoint::END_OF_STREAM_HEADER ) );
 
-        while( !stoppingPointReached ) {
+        while ( !stoppingPointReached ) {
             deflate::DecodedVector buffer( ALLOCATION_CHUNK_SIZE );
             std::optional<Footer> footer;
 
@@ -491,7 +491,7 @@ public:
             #ifdef WITH_ISAL
                 return finishDecodeChunkWithIsal( bitReader, untilOffset, /* initialWindow */ {},
                                                   maxDecompressedChunkSize, std::move( result ),
-                                                  std::move( subchunks) );
+                                                  std::move( subchunks ) );
             #endif
 
                 didReadHeader = true;
@@ -511,7 +511,7 @@ public:
             if ( cleanDataCount >= deflate::MAX_WINDOW_SIZE ) {
                 return finishDecodeChunkWithIsal( bitReader, untilOffset, result.getLastWindow( {} ),
                                                   maxDecompressedChunkSize, std::move( result ),
-                                                  std::move( subchunks) );
+                                                  std::move( subchunks ) );
             }
         #endif
 
@@ -700,7 +700,7 @@ public:
             bitReader.seekTo( blockOffset );
             const auto window = initialWindow->decompress();
             return decodeChunkWithRapidgzip( &bitReader, untilOffset, *window, maxDecompressedChunkSize,
-                                              chunkDataConfiguration );
+                                             chunkDataConfiguration );
         }
 
         const auto tryToDecode =

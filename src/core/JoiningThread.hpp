@@ -11,7 +11,7 @@
 class JoiningThread
 {
 public:
-    template<class Function, class... Args>
+    template<class Function, class ... Args>
     explicit
     JoiningThread( Function&& function, Args&&... args ) :
         m_thread( std::forward<Function>( function ), std::forward<Args>( args )... )
