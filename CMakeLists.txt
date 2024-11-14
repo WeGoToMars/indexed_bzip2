@@ -94,7 +94,7 @@ if(GIT_FOUND)
     add_custom_target(beautify-all
         COMMAND ${GIT_EXECUTABLE} ls-tree -r --name-only HEAD > ${CMAKE_BINARY_DIR}/.beautify.lst
         COMMAND sed -i -E "/[.](h|c)(pp)?$/!d; /external\\//d; /indexed_bzip2.cpp/d;" ${CMAKE_BINARY_DIR}/.beautify.lst
-        COMMAND uncrustify -c uncrustify.cfg -F ${CMAKE_BINARY_DIR}/.beautify.lst --no-backup
+        COMMAND uncrustify -c src/uncrustify.cfg -F ${CMAKE_BINARY_DIR}/.beautify.lst --no-backup
         VERBATIM
         # git ls-tree needs to be executed in git root
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
