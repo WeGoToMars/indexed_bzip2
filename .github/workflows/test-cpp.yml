@@ -178,7 +178,6 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python3 -m pip install --upgrade pip
         python3 -m pip install --upgrade-strategy eager --upgrade indexed_gzip pgzip
 
     - name: Run Tests With Sanitizers
@@ -236,7 +235,6 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python3 -m pip install --upgrade pip
         python3 -m pip install --upgrade-strategy eager --upgrade indexed_gzip pgzip
 
     - name: Run Tests With Sanitizers
@@ -291,7 +289,6 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python3 -m pip install --upgrade pip
         python3 -m pip install --upgrade-strategy eager --upgrade indexed_gzip pgzip
 
     - name: Run Tests With Sanitizers
@@ -345,7 +342,6 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python3 -m pip install --upgrade pip
         python3 -m pip install --upgrade-strategy eager --upgrade indexed_gzip pgzip
 
     - name: Run Tests With Sanitizers
@@ -479,7 +475,6 @@ jobs:
 
     - name: Install Python Dependencies
       run: |
-        python3 -m pip install --upgrade pip
         python3 -m pip install build
 
     - name: Install indexed_bzip2
