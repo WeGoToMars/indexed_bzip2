@@ -2,14 +2,14 @@ name: C++ Code Checks
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "debug-ci" ]
   pull_request:
   workflow_dispatch:
 
 jobs:
   Code-Coverage:
     name: Code Coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     # Suddenly, the upload to codecov does not work anymore and times out after 6 hours -.-.
     # It's not like I used it much anyway, except to have a badge.
     if: false
@@ -69,7 +69,7 @@ jobs:
 
   Clang-Tidy:
     name: Clang-Tidy
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
     - uses: actions/checkout@v4
       with:
@@ -88,7 +88,7 @@ jobs:
   Check:
     name: Check without Sanitizer
     # And especially without -DSHORT_TESTS, which makes it non redundant to the sanitizer checks!
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     strategy:
       matrix:
         use_system_zlib: [ON, OFF]
@@ -123,7 +123,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-13, windows-latest]
+        os: [ubuntu-24.04-arm, macos-13, windows-latest]
 
     env:
       MACOSX_DEPLOYMENT_TARGET: "10.15"
@@ -205,7 +205,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-13]
+        os: [ubuntu-24.04-arm, macos-13]
 
     steps:
     - uses: actions/checkout@v4
@@ -259,7 +259,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-13]
+        os: [ubuntu-24.04-arm, macos-13]
 
     steps:
     - uses: actions/checkout@v4
@@ -312,7 +312,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-13]
+        os: [ubuntu-24.04-arm, macos-13]
 
     steps:
     - uses: actions/checkout@v4
@@ -361,7 +361,7 @@ jobs:
 
   TSan:
     name: TSan
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     steps:
     - uses: actions/checkout@v4
       with:
@@ -435,7 +435,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-24.04, macos-13, macos-14, windows-latest]
+        os: [ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
 
     steps:
     - uses: actions/checkout@v4
