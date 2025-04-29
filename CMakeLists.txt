@@ -33,12 +33,16 @@ add_compile_options(
     # https://www.phoronix.com/news/GCC-fhardened-Hardening-Option
     # https://developers.redhat.com/blog/2018/03/21/compiler-and-linker-flags-gcc
     # I have not observed any performance impact for these.
-    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:-fpie;-fstack-protector-strong;-fcf-protection=full>"
+    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:-fpie;-fstack-protector-strong>"
     # -fstack-clash-protection crashes the MINGW compiler https://github.com/msys2/MINGW-packages/issues/5348
     "$<$<AND:$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>,$<NOT:$<PLATFORM_ID:Windows>>>:-fstack-clash-protection>"
     # Fix error with MINGW: Fatal error: can't write 94 bytes to section .text of testCLI.cpp.obj: 'file too big'
     "$<$<AND:$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>,$<PLATFORM_ID:Windows>>:-Wa,-mbig-obj>"
 )
+# ARM: cc1plus: error: ‘-fcf-protection=full’ is not supported for this target
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+    add_compile_options("$<$<COMPILE_LANG_AND_ID:CXX,Clang,GNU>:-fcf-protection=full>")
+endif()
 
 add_link_options(
     "$<$<AND:$<COMPILE_LANG_AND_ID:CXX,AppleClang,Clang,GNU>,$<BOOL:${CODE_COVERAGE}>>:--coverage>"

@@ -95,7 +95,7 @@ class Build(build_ext):
                 # I have not observed any performance impact for these.
                 ext.extra_compile_args += ['-fstack-protector-strong']
                 ext.extra_link_args += ['-fstack-clash-protection']
-                # AppleClang seems to not like this flag:
+                # ARM: cc1plus: error: ‘-fcf-protection=full’ is not supported for this target.
                 if supportsFlag(self.compiler, '-fcf-protection=full'):
                     ext.extra_compile_args += ['-fcf-protection=full']
 
