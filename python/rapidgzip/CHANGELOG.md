@@ -1,4 +1,12 @@
 
+# Version 0.14.4 built on 2025-06-27
+
+## Fixes
+
+ - Some input files resulted in wrong null-bytes appearing in the decompressed stream when using `RapidgzipFile`
+   for bzip2 files. `IndexedBzip2File` did not suffer from this bug.
+
+
 # Version 0.14.3 built on 2024-10-14
 
 ## Fixes
