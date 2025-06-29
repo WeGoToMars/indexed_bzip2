@@ -41,17 +41,17 @@ public:
 class ScopedGIL
 {
 public:
-    struct ReferenceCounter
+    struct GILState
     {
-        bool isLocked;
-        size_t counter{ 0 };
+        bool locked;
+        bool exists;
     };
 
 public:
     explicit
     ScopedGIL( bool doLock )
     {
-        m_referenceCounters.emplace_back( lock( doLock ) );
+        m_referenceCounters.emplace_back( apply( { .locked = doLock, .exists = true } ) );
     }
 
     ~ScopedGIL() noexcept
@@ -61,7 +61,7 @@ public:
             std::terminate();
         }
 
-        lock( m_referenceCounters.back() );
+        apply( m_referenceCounters.back() );
         m_referenceCounters.pop_back();
     }
 
@@ -72,14 +72,20 @@ public:
 
 private:
     /**
-     * @return the old lock state.
+     * @return the old GIL state.
      */
-    bool
-    lock( bool doLock = true ) noexcept
+    GILState
+    apply( const GILState targetState ) noexcept
     {
-        if ( ( doLock == false ) && pythonIsFinalizing() ) {
-            /* No need to unlock the GIL if it doesn't exist anymore. */
-            return false;
+        const auto doLock = targetState.locked;
+        if ( !doLock && pythonIsFinalizing() ) {
+            /* No need to unlock the GIL if it doesn't exist anymore. Should not matter what we return here. */
+            return { .locked = false, .exists = false };
+        }
+
+        if ( targetState.locked && !targetState.exists ) {
+            std::cerr << "Invalid GIL target state, which should be locked but not exist at the same time!\n";
+            std::terminate();
         }
 
         /**
@@ -93,7 +99,7 @@ private:
         static thread_local bool const isPythonThread{ isLocked };
 
         /** Used for locking non-Python threads. */
-        static thread_local PyGILState_STATE lockState{};
+        static thread_local std::optional<PyGILState_STATE> lockState{};
         /** Used for unlocking and relocking the Python main thread. */
         static thread_local PyThreadState* unlockState{ nullptr };
 
@@ -101,9 +107,9 @@ private:
          * PyGILState_Check() is 0 / unlocked!
          * Python 3.10 has _Py_IsFinalizing, 3.13 has Py_IsFinalizing, however on Python 3.6, these are missing. */
         if ( pythonIsFinalizing() || ( isLocked && ( PyGILState_Check() == 0 ) ) ) {
-            if ( ( PyGILState_Check() == 1 ) && !isPythonThread ) {
-                PyGILState_Release( lockState );
-                lockState = {};
+            if ( ( PyGILState_Check() == 1 ) && lockState.has_value() ) {
+                PyGILState_Release( *lockState );
+                lockState.reset();
             }
             std::cerr << "Detected Python finalization from running rapidgzip thread.\n"
                          "To avoid this exception you should close all RapidgzipFile objects correctly,\n"
@@ -113,31 +119,43 @@ private:
 
         const auto wasLocked = isLocked;
         if ( isLocked == doLock ) {
-            return wasLocked;
+            return { .locked = wasLocked, .exists = true };
         }
 
+        const auto gilExists = PyGILState_GetThisThreadState() != nullptr;
         if ( doLock ) {
-            if ( isPythonThread ) {
+            if ( unlockState != nullptr ) {
                 PyEval_RestoreThread( unlockState );
                 unlockState = nullptr;
+            } else if ( !gilExists ) {
+                /* This should only happen on spawned C-threads when they try to call into Python the very first
+                 * time. All recursive calls into Python should avoid PyGILState_Ensure/_Release because destroying
+                 * and recreating the thread state can lead to use-after-free bugs!
+                 * Therefore, this should only happen when m_referenceCounters is empty. */
+                lockState.emplace( PyGILState_Ensure() );
             } else {
-                lockState = PyGILState_Ensure();
+                /* This is what PyGILState_Ensure does internally. */
+                PyEval_RestoreThread(PyGILState_GetThisThreadState());
             }
         } else {
-            if ( isPythonThread ) {
-                unlockState = PyEval_SaveThread();
+            if ( !targetState.exists && lockState.has_value() ) {
+                /* https://github.com/python/cpython/blob/5334732f9c8a44722e4b339f4bb837b5b0226991/Python/pystate.c
+                 *   #L2833
+                 * PyGILState_Release basically does this: if (oldstate == PyGILState_UNLOCKED) PyEval_SaveThread();
+                 * But, I think it does not account for the old state to become invalid. */
+                PyGILState_Release( *lockState );
+                lockState.reset();
             } else {
-                PyGILState_Release( lockState );
-                lockState = {};
+                unlockState = PyEval_SaveThread();
             }
         }
 
         isLocked = doLock;
-        return wasLocked;
+        return { .locked = wasLocked, .exists = gilExists };
     }
 
 private:
-    inline static thread_local std::vector<bool> m_referenceCounters;
+    inline static thread_local std::vector<GILState> m_referenceCounters;
 };
 
 
