@@ -516,7 +516,9 @@ cdef class _RapidgzipFile():
     def seek(self, offset, whence = io.SEEK_SET):
         if not self.gzipReader:
             raise Exception("Invalid file object!")
-        return self.gzipReader.seek(offset, whence)
+        result = self.gzipReader.seek(offset, whence)
+        print("[_RapidgzipFile.seek] Return", result)
+        return result
 
     def tell(self):
         if not self.gzipReader:

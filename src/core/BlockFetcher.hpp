@@ -253,6 +253,7 @@ public:
          * because it is the only method that waits for results from the worker threads. But, it might be
          * more efficient to unlock the GIL outside to avoid many unlock/lock cycles and to leave it unlocked
          * for longer so as to not hinder the worker threads. */
+        std::cerr << ( ThreadSafeOutput() << "[BlockFetcher::get] Unlock GIL" );
         const ScopedGILUnlock unlockedGIL;
     #endif
 

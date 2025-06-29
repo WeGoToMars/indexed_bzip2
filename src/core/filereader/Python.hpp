@@ -51,11 +51,18 @@ public:
     explicit
     ScopedGIL( bool doLock )
     {
+        std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' )
+            << "[ScopedGIL::ScopedGIL]" << ( doLock ? "Lock" : "Unlock" ) << "GIL" );
         m_referenceCounters.emplace_back( apply( { .locked = doLock, .exists = true } ) );
     }
 
     ~ScopedGIL() noexcept
     {
+        std::cerr << (
+            ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' )
+            << "[ScopedGIL::~ScopedGIL] Restore previous lock state. Current number of states:"
+            << m_referenceCounters.size()
+        );
         if ( m_referenceCounters.empty() ) {
             std::cerr << "Logic error: It seems there were more unlocks than locks!\n";
             std::terminate();
@@ -119,36 +126,52 @@ private:
 
         const auto wasLocked = isLocked;
         if ( isLocked == doLock ) {
+            std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' )
+                << "  [ScopedGIL::lock] GIL already in requested state!" );
             return { .locked = wasLocked, .exists = true };
         }
+
+        std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' )
+            << "  [ScopedGIL::lock] Change GIL lock state" << std::boolalpha << wasLocked << "->" << doLock );
 
         const auto gilExists = PyGILState_GetThisThreadState() != nullptr;
         if ( doLock ) {
             if ( unlockState != nullptr ) {
+                std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' )
+                << "  [ScopedGIL::lock]   PyEval_RestoreThread" );
+
                 PyEval_RestoreThread( unlockState );
                 unlockState = nullptr;
             } else if ( !gilExists ) {
+                std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' ) << "  [ScopedGIL::lock]   PyGILState_Ensure" );
+
                 /* This should only happen on spawned C-threads when they try to call into Python the very first
                  * time. All recursive calls into Python should avoid PyGILState_Ensure/_Release because destroying
                  * and recreating the thread state can lead to use-after-free bugs!
                  * Therefore, this should only happen when m_referenceCounters is empty. */
                 lockState.emplace( PyGILState_Ensure() );
             } else {
-                /* This is what PyGILState_Ensure does internally. */
-                PyEval_RestoreThread(PyGILState_GetThisThreadState());
+                // ?!
             }
         } else {
             if ( !targetState.exists && lockState.has_value() ) {
+                std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' ) << "  [ScopedGIL::lock]   PyGILState_Release" );
                 /* https://github.com/python/cpython/blob/5334732f9c8a44722e4b339f4bb837b5b0226991/Python/pystate.c
                  *   #L2833
                  * PyGILState_Release basically does this: if (oldstate == PyGILState_UNLOCKED) PyEval_SaveThread();
                  * But, I think it does not account for the old state to become invalid. */
                 PyGILState_Release( *lockState );
                 lockState.reset();
+                if ( PyGILState_GetThisThreadState() == nullptr ) {
+                    std::cerr << "  GIL HAS BEEN DESTRUCTED!!!\n";
+                }
             } else {
+                std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' ) << "  [ScopedGIL::lock]   PyEval_SaveThread" );
                 unlockState = PyEval_SaveThread();
             }
         }
+
+        std::cerr << ( ThreadSafeOutput() << std::string( 4 * m_referenceCounters.size(), ' ' ) << "  [ScopedGIL::lock]   doLock:" << doLock << "GIL locked?" << ( PyGILState_Check() == 1 ) );
 
         isLocked = doLock;
         return { .locked = wasLocked, .exists = gilExists };
@@ -287,8 +310,17 @@ callPyObject( PyObject* pythonObject,
         throw std::invalid_argument( "[callPyObject] Got null PyObject!" );
     }
 
+    std::cerr << ( ThreadSafeOutput() << "[callPyObject]" );
     const ScopedGILLock gilLock;
 
+    if ( PyGILState_Check() == 0 ) {
+        std::cerr << "EXPECTED GIL TO BE LOCKED!\n";
+        std::terminate();
+    }
+    /* Uncommenting all these fixes the issue! */
+    //PyGILState_STATE gstate = PyGILState_Ensure();  // Acquire GIL
+
+    std::cerr << ( ThreadSafeOutput() << "Call PyObject_Call" );
     if constexpr ( std::is_same_v<Result, void> ) {
         PyObject_Call( pythonObject, PyTuple_Pack( nArgs, toPyObject( args )... ), nullptr );
     } else {
@@ -302,8 +334,11 @@ callPyObject( PyObject* pythonObject,
             }
             throw std::invalid_argument( std::move( message ).str() );
         }
+        //PyGILState_Release(gstate);  // Release GIL
+        std::cerr << ( ThreadSafeOutput() << "[callPyObject] fromPyObject" << (void*)result );
         return fromPyObject<Result>( result );
     }
+    //PyGILState_Release(gstate);  // Release GIL
 }
 
 
@@ -414,6 +449,7 @@ public:
         const ScopedGILLock gilLock;
 
         /** @todo better to use readinto because read might return less than requested even before the EOF! */
+        std::cerr << "\n" << ( ThreadSafeOutput() << "[PythonFileReader::read] callPyObject read" << nMaxBytesToRead );
         auto* const bytes = callPyObject<PyObject*>( mpo_read, nMaxBytesToRead );
         if ( !PyBytes_Check( bytes ) ) {
             Py_XDECREF( bytes );
@@ -485,6 +521,7 @@ public:
     seek( long long int offset,
           int           origin = SEEK_SET ) override
     {
+        std::cerr << "\n" << ( ThreadSafeOutput() << "[PythonFileReader::seek] offset" << offset );
         if ( ( m_pythonObject == nullptr ) || !m_seekable ) {
             throw std::invalid_argument( "Invalid or unseekable file can't be seeked!" );
         }
@@ -504,6 +541,7 @@ public:
             break;
         }
 
+        std::cerr << "\n" << ( ThreadSafeOutput() << "[PythonFileReader::seek] callPyObject seek to" << offset );
         m_currentPosition = callPyObject<size_t>( mpo_seek, offset, pythonWhence );
 
         return m_currentPosition;

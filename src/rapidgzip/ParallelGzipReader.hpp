@@ -496,6 +496,9 @@ public:
           char* const  outputBuffer         = nullptr,
           const size_t nBytesToRead         = std::numeric_limits<size_t>::max() )
     {
+        std::cerr << "\n";
+        std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::read] outputFileDescriptor:" << outputFileDescriptor
+                  << ", outputBuffer:" << (void*)outputBuffer << ", nBytesToRead:" << nBytesToRead );
         const auto writeFunctor =
             [nBytesDecoded = uint64_t( 0 ), outputFileDescriptor, outputBuffer]
             ( const std::shared_ptr<ChunkData>& chunkData,
@@ -538,6 +541,7 @@ public:
     read( const WriteFunctor& writeFunctor,
           const size_t        nBytesToRead = std::numeric_limits<size_t>::max() )
     {
+        std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::read] writeFunctor, nBytesToRead:" << nBytesToRead );
         if ( !writeFunctor && m_blockMap->finalized() ) {
             const auto oldOffset = tell();
             const auto newOffset = seek( nBytesToRead > static_cast<size_t>( std::numeric_limits<long long int>::max() )
@@ -633,6 +637,8 @@ public:
     seek( long long int offset,
           int           origin = SEEK_SET ) override
     {
+        std::cerr << "\n";
+        std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] offset:" << offset << "GIL" << PyGILState_Check() );
         if ( closed() ) {
             throw std::invalid_argument( "You may not call seek on closed ParallelGzipReader!" );
         }
@@ -648,6 +654,7 @@ public:
         if ( positiveOffset == tell() ) {
             /* This extra check for EOF is necessary for empty files! */
             m_atEndOfFile = m_blockMap->finalized() && ( m_currentPosition >= m_blockMap->back().second );
+            std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] Return 1:" << positiveOffset << "GIL" << PyGILState_Check() );
             return positiveOffset;
         }
 
@@ -663,6 +670,7 @@ public:
             }
             m_atEndOfFile = false;
             m_currentPosition = positiveOffset;
+            std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] Return 2:" << positiveOffset << "GIL" << PyGILState_Check() );
             return positiveOffset;
         }
 
@@ -676,12 +684,14 @@ public:
         if ( blockInfo.contains( positiveOffset ) ) {
             m_currentPosition = positiveOffset;
             m_atEndOfFile = m_blockMap->finalized() && ( m_currentPosition >= m_blockMap->back().second );
+            std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] Return 3:" << tell() << "GIL" << PyGILState_Check() );
             return tell();
         }
 
         if ( m_blockMap->finalized() ) {
             m_atEndOfFile = true;
             m_currentPosition = m_blockMap->back().second;
+            std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] Return 4:" << tell() << "GIL" << PyGILState_Check() );
             return tell();
         }
 
@@ -691,6 +701,7 @@ public:
         m_atEndOfFile = false;
         m_currentPosition = blockInfo.decodedOffsetInBytes + blockInfo.decodedSizeInBytes;
         read( -1, nullptr, positiveOffset - tell() );
+        std::cerr << ( ThreadSafeOutput() << "[ParallelGzipReader::seek] Return 5:" << tell() << "GIL" << PyGILState_Check() );
         return tell();
     }
 
