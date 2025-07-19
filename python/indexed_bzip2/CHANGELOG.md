@@ -1,4 +1,10 @@
 
+# Version 1.7.0 built on 2025-07-20
+
+ - This update now uses the same code base as the planned rapidgzip 0.15.0 and shares many of the fixes.
+ - Fix a bug on native Windows with files > 4 GiB because `fstat` fails to return the file size for those.
+ - Increases minimum macOS requirement to 10.15.
+
 # Version 1.6.0 built on 2024-02-22
 
  - Version 1.5.0 was based on the same code base as rapidgzip 0.6.0.
